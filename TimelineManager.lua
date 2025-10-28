@@ -108,7 +108,6 @@ function TimelineManager:makeTrackInteractive(track)
 			dragging = true
 			dragStart = input.Position.X
 			originalPosition = track.Position.X.Offset
-			input:PreventSinking()
 		end
 	end)
 
@@ -136,6 +135,7 @@ function TimelineManager:makeTrackInteractive(track)
 		handle.Size = UDim2.new(0, 8, 1, 0)
 		handle.Position = (side == "Left") and UDim2.new(0, -4, 0, 0) or UDim2.new(1, -4, 0, 0)
 		handle.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+		handle.Active = true -- Sinks input
 		handle.Parent = track
 
 		local resizing = false
@@ -146,7 +146,6 @@ function TimelineManager:makeTrackInteractive(track)
 				resizeStart = input.Position.X
 				originalSize = track.Size.X.Offset
 				originalPos = track.Position.X.Offset
-				input:PreventSinking()
 			end
 		end)
 		handle.InputChanged:Connect(function(input)
@@ -231,6 +230,7 @@ function TimelineManager:connectEvents()
 					local newTrack = Instance.new("TextButton")
 					newTrack.Name = "TimelineTrack"
 					newTrack.Text = self.drawingMode or ""
+					newTrack.Active = true -- Sinks input
 					newTrack.Size = UDim2.new(0, pixelWidth, 0, self.TRACK_HEIGHT)
 					newTrack.Position = UDim2.new(0, pixelStart, 0, yPos)
 
