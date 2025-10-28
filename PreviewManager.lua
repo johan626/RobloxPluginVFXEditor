@@ -76,7 +76,8 @@ function PreviewManager:update(deltaTime)
 					sound.PlaybackSpeed = track:GetAttribute("PlaybackSpeed")
 					sound.Parent = workspace -- Play in the main workspace
 					sound:Play()
-					Debris:AddItem(sound, track:GetAttribute("Duration") + 5) -- Add to debris
+					local duration = track.Size.X.Offset / self.Config.PIXELS_PER_SECOND
+					Debris:AddItem(sound, duration + 5) -- Add to debris
 					self.previewInstances[track] = true -- Just mark as played
 				end
 			elseif not isActive and instanceExists then
