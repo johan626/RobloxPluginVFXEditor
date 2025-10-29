@@ -76,4 +76,38 @@ function Utils.parseNumberRange(str)
 	return NumberRange.new(1) -- Default to 1
 end
 
+--[[
+Parses a string into a Vector3.
+The string should be formatted as three numbers separated by commas.
+Example: "1, 2, 3" creates a Vector3(1, 2, 3).
+--]]
+function Utils.parseVector3(str)
+	local x, y, z
+	pcall(function()
+		local parts = str:split(",")
+		x = tonumber(parts[1])
+		y = tonumber(parts[2])
+		z = tonumber(parts[3])
+	end)
+
+	if x and y and z then
+		return Vector3.new(x, y, z)
+	end
+	return Vector3.new() -- Default to origin
+end
+
+--[[
+Parses a string into a valid Enum item.
+Example: parseEnum(Enum.TextureMode, "Wrap") returns Enum.TextureMode.Wrap
+--]]
+function Utils.parseEnum(enumType, stringValue)
+	local success, enumItem = pcall(function()
+		return enumType[stringValue]
+	end)
+	if success and enumItem then
+		return enumItem
+	end
+	return nil -- Return nil if not found
+end
+
 return Utils
