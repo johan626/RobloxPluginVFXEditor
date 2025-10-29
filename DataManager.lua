@@ -74,7 +74,7 @@ end
 function DataManager:saveProject(plugin)
 	local selection = game:GetService("Selection"):Get()
 	if #selection ~= 1 then
-		plugin:SetWarningMessage("Silakan pilih SATU folder atau lokasi tujuan di Explorer.")
+		warn("Silakan pilih SATU folder atau lokasi tujuan di Explorer.")
 		return
 	end
 	local target = selection[1]
@@ -92,7 +92,7 @@ function DataManager:saveProject(plugin)
 	end
 
 	if #allTracksData == 0 then
-		plugin:SetWarningMessage("Timeline kosong. Tidak ada yang bisa disimpan.")
+		warn("Timeline kosong. Tidak ada yang bisa disimpan.")
 		return
 	end
 
@@ -103,14 +103,14 @@ function DataManager:saveProject(plugin)
 	newScript.Source = formattedContent
 	newScript.Parent = target
 
-	plugin:SetSuccessMessage("Proyek berhasil disimpan ke " .. target:GetFullName())
+	print("Proyek berhasil disimpan ke " .. target:GetFullName())
 end
 
 -- Fungsi utama untuk memuat proyek
 function DataManager:loadProject(plugin)
 	local selection = game:GetService("Selection"):Get()
 	if #selection ~= 1 or not selection[1]:IsA("ModuleScript") then
-		plugin:SetWarningMessage("Silakan pilih SATU ModuleScript proyek untuk dimuat.")
+		warn("Silakan pilih SATU ModuleScript proyek untuk dimuat.")
 		return
 	end
 	local script = selection[1]
@@ -118,7 +118,7 @@ function DataManager:loadProject(plugin)
 	-- Muat data dari skrip (gunakan pcall untuk keamanan)
 	local success, trackData = pcall(require, script)
 	if not success or not trackData then
-		plugin:SetWarningMessage("Gagal memuat data dari skrip. Pastikan formatnya benar.")
+		warn("Gagal memuat data dari skrip. Pastikan formatnya benar.")
 		return
 	end
 
@@ -128,7 +128,7 @@ function DataManager:loadProject(plugin)
 		self.timelineManager:createTrack(data)
 	end
 
-	plugin:SetSuccessMessage("Proyek berhasil dimuat dari " .. script:GetFullName())
+	print("Proyek berhasil dimuat dari " .. script:GetFullName())
 end
 
 return DataManager
