@@ -31,7 +31,11 @@ local dataManager = DataManager.new(timelineManager)
 
 -- Connect Modules
 timelineManager.TrackSelected:Connect(function(track)
-	PropertiesManager.populate(ui.PropertiesPanel, track)
+	PropertiesManager.populate(ui.PropertiesPanel, track, timelineManager)
+end)
+
+timelineManager.TrackDeleted:Connect(function()
+	PropertiesManager.clear(ui.PropertiesPanel)
 end)
 
 ui.CreateVFXButton.MouseButton1Click:Connect(function()
@@ -59,6 +63,19 @@ end)
 
 ui.LoadButton.MouseButton1Click:Connect(function()
 	dataManager:loadProject(plugin)
+end)
+
+ui.ResetButton.MouseButton1Click:Connect(function()
+	ui.ConfirmationDialog.Visible = true
+end)
+
+ui.ConfirmButton.MouseButton1Click:Connect(function()
+	timelineManager:clearTimeline()
+	ui.ConfirmationDialog.Visible = false
+end)
+
+ui.CancelButton.MouseButton1Click:Connect(function()
+	ui.ConfirmationDialog.Visible = false
 end)
 
 -- Toggle Widget Visibility
