@@ -27,16 +27,26 @@ function TimelineManager.new(ui, playhead) -- Pass playhead
 	self.ghostTrack = nil
 	self.selectedTrack = nil
 	self.copiedTrackData = nil
+	self.pasteTime = 0 -- To store time for pasting
 
 	-- Zoom & Pan State
 	self.zoom = 1 -- 1 = 100% zoom
-	self.isPanning = false
 
 	self.TrackSelected = {} -- Simple signal implementation
 	function self.TrackSelected:Connect(callback)
 		table.insert(self, callback)
 	end
 	function self.TrackSelected:Fire(...)
+		for _, callback in ipairs(self) do
+			callback(...)
+		end
+	end
+
+	self.TrackDeleted = {} -- Signal for when a track is deleted
+	function self.TrackDeleted:Connect(callback)
+		table.insert(self, callback)
+	end
+	function self.TrackDeleted:Fire(...)
 		for _, callback in ipairs(self) do
 			callback(...)
 		end
@@ -54,6 +64,49 @@ function TimelineManager:clearTimeline()
 			child:Destroy()
 		end
 	end
+	self.ui.ContextMenu.Visible = false
+end
+
+function TimelineManager:deleteSelectedTrack()
+	if self.selectedTrack then
+		self.selectedTrack:Destroy()
+		self.selectedTrack = nil
+		self.TrackDeleted:Fire()
+	end
+	self.ui.ContextMenu.Visible = false
+end
+
+function TimelineManager:copySelectedTrack()
+	if self.selectedTrack then
+		local data = {}
+		for _, attr in ipairs(self.selectedTrack:GetAttributes()) do
+			data[attr] = self.selectedTrack:GetAttribute(attr)
+		end
+		self.copiedTrackData = data
+		print("Track copied!")
+	end
+	self.ui.ContextMenu.Visible = false
+end
+
+function TimelineManager:pasteTrackAtTime(time)
+	if self.copiedTrackData then
+		local newData = {}
+		for k, v in pairs(self.copiedTrackData) do newData[k] = v end
+		newData.StartTime = time
+		self:createTrack(newData)
+		print("Track pasted!")
+	end
+	self.ui.ContextMenu.Visible = false
+end
+
+function TimelineManager:showContextMenu(mouseX, mouseY, options)
+	local menu = self.ui.ContextMenu
+	menu.Position = UDim2.new(0, mouseX, 0, mouseY)
+
+	self.ui.CopyButton.Visible = options.showCopy or false
+	self.ui.PasteButton.Visible = options.showPaste or false
+
+	menu.Visible = true
 end
 
 function TimelineManager:redrawTimeline()
@@ -110,9 +163,10 @@ function TimelineManager:findNextAvailableLane(newTrackStartTime, newTrackEndTim
 	for _, child in ipairs(self.timeline:GetChildren()) do
 		if child:IsA("TextButton") and child.Name == "TimelineTrack" then
 			local lane = child:GetAttribute("Lane")
-			if lane then
-				local startTime = child:GetAttribute("StartTime")
-				local duration = child:GetAttribute("Duration")
+			local startTime = child:GetAttribute("StartTime")
+			local duration = child:GetAttribute("Duration")
+
+			if lane and startTime and duration then
 				local endTime = startTime + duration
 				if not (newTrackEndTime <= startTime or newTrackStartTime >= endTime) then
 					lanes[lane] = true
@@ -128,14 +182,16 @@ end
 function TimelineManager:createTrack(trackData)
 	local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
 
-	local nextLane = self:findNextAvailableLane(trackData.StartTime, trackData.StartTime + trackData.Duration)
+	local startTime = trackData.StartTime or 0
+	local duration = trackData.Duration or 0
+	local nextLane = self:findNextAvailableLane(startTime, startTime + duration)
 	local yPos = (nextLane - 1) * (self.TRACK_HEIGHT + self.LANE_PADDING) + self.LANE_PADDING
 
 	local newTrack = Instance.new("TextButton")
 	newTrack.Name = "TimelineTrack"
 	newTrack.Text = trackData.ComponentType or ""
-	newTrack.Size = UDim2.new(0, trackData.Duration * zoomedPixelsPerSecond, 0, self.TRACK_HEIGHT)
-	newTrack.Position = UDim2.new(0, trackData.StartTime * zoomedPixelsPerSecond, 0, yPos)
+	newTrack.Size = UDim2.new(0, duration * zoomedPixelsPerSecond, 0, self.TRACK_HEIGHT)
+	newTrack.Position = UDim2.new(0, startTime * zoomedPixelsPerSecond, 0, yPos)
 	newTrack.Active = true -- For sinking input
 
 	if trackData.ComponentType == 'Light' then
@@ -144,6 +200,14 @@ function TimelineManager:createTrack(trackData)
 		newTrack.BackgroundColor3 = Config.TrackColors.Sound
 	elseif trackData.ComponentType == 'Particle' then
 		newTrack.BackgroundColor3 = Config.TrackColors.Particle
+	elseif trackData.ComponentType == 'SpotLight' then
+		newTrack.BackgroundColor3 = Config.TrackColors.SpotLight
+	elseif trackData.ComponentType == 'SurfaceLight' then
+		newTrack.BackgroundColor3 = Config.TrackColors.SurfaceLight
+	elseif trackData.ComponentType == 'Beam' then
+		newTrack.BackgroundColor3 = Config.TrackColors.Beam
+	elseif trackData.ComponentType == 'Trail' then
+		newTrack.BackgroundColor3 = Config.TrackColors.Trail
 	end
 
 	-- Store all data as attributes
@@ -168,12 +232,23 @@ function TimelineManager:makeTrackInteractive(track)
 	outline.Parent = track
 
 	track.MouseButton1Down:Connect(function()
+		self.ui.ContextMenu.Visible = false
 		if self.selectedTrack and self.selectedTrack ~= track then
-			self.selectedTrack.SelectionOutline.Enabled = false
+			local oldOutline = self.selectedTrack:FindFirstChild("SelectionOutline")
+			if oldOutline then
+				oldOutline.Enabled = false
+			end
 		end
 		self.selectedTrack = track
 		outline.Enabled = true
 		self.TrackSelected:Fire(track)
+	end)
+
+	track.MouseButton2Down:Connect(function(x, y)
+		self.selectedTrack = track
+		outline.Enabled = true
+		self.TrackSelected:Fire(track)
+		self:showContextMenu(x, y, {showCopy = true})
 	end)
 
 	-- Drag to move logic
@@ -183,6 +258,7 @@ function TimelineManager:makeTrackInteractive(track)
 
 	track.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			self.ui.ContextMenu.Visible = false
 			dragging = true
 			dragStart = input.Position.X
 			originalPosition = track.Position.X.Offset
@@ -223,6 +299,7 @@ function TimelineManager:makeTrackInteractive(track)
 		local resizeStart, originalSize, originalPos = 0, 0, 0
 		handle.InputBegan:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+				self.ui.ContextMenu.Visible = false
 				resizing = true
 				resizeStart = input.Position.X
 				originalSize = track.Size.X.Offset
@@ -272,10 +349,24 @@ function TimelineManager:connectEvents()
 	self.ui.AddLightButton.MouseButton1Click:Connect(function() startDrawing('Light') end)
 	self.ui.AddSoundButton.MouseButton1Click:Connect(function() startDrawing('Sound') end)
 	self.ui.AddParticleButton.MouseButton1Click:Connect(function() startDrawing('Particle') end)
+	self.ui.AddSpotLightButton.MouseButton1Click:Connect(function() startDrawing('SpotLight') end)
+	self.ui.AddSurfaceLightButton.MouseButton1Click:Connect(function() startDrawing('SurfaceLight') end)
+	self.ui.AddBeamButton.MouseButton1Click:Connect(function() startDrawing('Beam') end)
+	self.ui.AddTrailButton.MouseButton1Click:Connect(function() startDrawing('Trail') end)
 
-	-- Drawing logic
+	-- Context Menu Button Connections
+	self.ui.CopyButton.MouseButton1Click:Connect(function()
+		self:copySelectedTrack()
+	end)
+	self.ui.PasteButton.MouseButton1Click:Connect(function()
+		self:pasteTrackAtTime(self.pasteTime)
+	end)
+
+	-- Drawing and Context Menu logic
 	local inputBeganConnection1
 	inputBeganConnection1 = self.timeline.InputBegan:Connect(function(input)
+		self.ui.ContextMenu.Visible = false
+
 		if self.drawingMode and input.UserInputType == Enum.UserInputType.MouseButton1 then
 			self.isDrawing = true
 			local mouseX = input.Position.X - self.timeline.AbsolutePosition.X
@@ -286,6 +377,14 @@ function TimelineManager:connectEvents()
 			self.ghostTrack.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
 			self.ghostTrack.BackgroundTransparency = 0.5
 			self.ghostTrack.Parent = self.timeline
+		elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+			local mouseX = input.Position.X
+			local mouseY = input.Position.Y
+			self:showContextMenu(mouseX, mouseY, {showPaste = self.copiedTrackData ~= nil})
+
+			local relativeMouseX = input.Position.X - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
+			local timeAtMouse = relativeMouseX / (self.PIXELS_PER_SECOND * self.zoom)
+			self.pasteTime = timeAtMouse
 		end
 	end)
 
@@ -328,25 +427,93 @@ function TimelineManager:connectEvents()
 						trackData.Brightness = 1
 						trackData.Color = Color3.fromRGB(255, 255, 255)
 						trackData.Range = 8
+						trackData.Shadows = false
+					elseif self.drawingMode == 'SpotLight' or self.drawingMode == 'SurfaceLight' then
+						trackData.Enabled = true
+						trackData.Brightness = 1
+						trackData.Color = Color3.fromRGB(255, 255, 255)
+						trackData.Range = 8
+						trackData.Angle = 60
+						trackData.Face = "Front"
+						trackData.Shadows = false
+					elseif self.drawingMode == 'Beam' then
+						trackData.Enabled = true
+						trackData.Color = "0,1,1,1;1,1,1,1" -- This is a ColorSequence
+						trackData.Width0 = 1
+						trackData.Width1 = 1
+						trackData.Attachment0Offset = "0, 2, 0"
+						trackData.Attachment1Offset = "0, 10, 0"
+						trackData.Texture = ""
+						trackData.CurveSize0 = 0
+						trackData.CurveSize1 = 0
+						trackData.FaceCamera = false
+						trackData.LightEmission = 0
+						trackData.LightInfluence = 1
+						trackData.Segments = 10
+						trackData.TextureLength = 1
+						trackData.TextureMode = "Stretch"
+						trackData.TextureSpeed = 1
+						trackData.Transparency = "0,0;1,0"
+						trackData.ZOffset = 0
+					elseif self.drawingMode == 'Trail' then
+						trackData.Enabled = true
+						trackData.Color = "0,1,1,1;1,1,1,1" -- This is a ColorSequence
+						trackData.Texture = ""
+						trackData.Lifetime = 1
+						trackData.WidthScale = "0,1;1,1"
+						trackData.FaceCamera = false
+						trackData.LightEmission = 0
+						trackData.LightInfluence = 1
+						trackData.MinLength = 0
+						trackData.MaxLength = 0
+						trackData.TextureLength = 1
+						trackData.TextureMode = "Stretch"
+						trackData.Transparency = "0,0;1,0"
+						trackData.StartPosition = "0,0,0"
+						trackData.EndPosition = "10,0,0"
 					elseif self.drawingMode == 'Sound' then
 						trackData.SoundId = "rbxassetid://"
 						trackData.Volume = 0.5
 						trackData.PlaybackSpeed = 1
+						trackData.TimePosition = 0
+						trackData.Looped = false
+						trackData.RollOffMode = "Inverse"
+						trackData.RollOffMinDistance = 10
+						trackData.RollOffMaxDistance = 100
 					elseif self.drawingMode == 'Particle' then
 						trackData.Enabled = true
 						trackData.Rate = 20
-						trackData.Lifetime = "1 2" -- NumberRange
-						trackData.Size = "0,1;1,0" -- NumberSequence
-						trackData.Color = "0,1,1,1;1,1,1,1" -- ColorSequence
-						trackData.SpreadAngle = 360
-						trackData.Rotation = "0 360" -- NumberRange
-						trackData.Speed = "5 10" -- NumberRange
+						trackData.Lifetime = "1 2"
+						trackData.Size = "0,1;1,0"
+						trackData.Color = "0,1,1,1;1,1,1,1" -- This is a ColorSequence
+						trackData.SpreadAngle = "360 360"
+						trackData.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+						trackData.Rotation = "0 360"
+						trackData.Speed = "5 10"
+						trackData.Acceleration = "0,0,0"
+						trackData.Drag = 0
+						trackData.EmissionDirection = "Top"
+						trackData.LightEmission = 0
+						trackData.LightInfluence = 1
+						trackData.Orientation = "FacingCamera"
+						trackData.RotSpeed = "0 0"
+						trackData.Squash = "0,0;1,0"
+						trackData.TimeScale = 1
+						trackData.Transparency = "0,0;1,0"
+						trackData.ZOffset = 0
 					end
 					self:createTrack(trackData)
 				end
 				self.ghostTrack:Destroy()
 			end
 			self.drawingMode = nil
+		end
+	end)
+
+	-- Delete logic
+	UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+		if not gameProcessedEvent and input.KeyCode == Enum.KeyCode.Delete then
+			self:deleteSelectedTrack()
 		end
 	end)
 
@@ -357,57 +524,17 @@ function TimelineManager:connectEvents()
 		local isCtrlDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
 
 		if isCtrlDown and input.KeyCode == Enum.KeyCode.C then
-			if self.selectedTrack then
-				local data = {}
-				for _, attr in ipairs(self.selectedTrack:GetAttributes()) do
-					data[attr] = self.selectedTrack:GetAttribute(attr)
-				end
-				self.copiedTrackData = data
-				print("Track copied!")
-			end
+			self:copySelectedTrack()
 		end
 
 		if isCtrlDown and input.KeyCode == Enum.KeyCode.V then
-			if self.copiedTrackData then
-				local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
-				-- Paste at playhead position
-				local playheadTime = self.playhead.Position.X.Offset / zoomedPixelsPerSecond
-				local newData = {}
-				for k, v in pairs(self.copiedTrackData) do newData[k] = v end
-				newData.StartTime = playheadTime
-				self:createTrack(newData)
-				print("Track pasted!")
-			end
+			local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
+			local playheadTime = self.playhead.Position.X.Offset / zoomedPixelsPerSecond
+			self:pasteTrackAtTime(playheadTime)
 		end
 	end)
 
-	-- Zoom & Pan logic
-	local lastPanPosition
-	local inputBeganConnection3
-	inputBeganConnection3 = self.timeline.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton2 then -- Right mouse for pan
-			self.isPanning = true
-			lastPanPosition = input.Position
-		end
-	end)
-
-	local inputChangedConnection2
-	inputChangedConnection2 = self.timeline.InputChanged:Connect(function(input)
-		if self.isPanning and input.UserInputType == Enum.UserInputType.MouseMovement then
-			local delta = input.Position - lastPanPosition
-			lastPanPosition = input.Position
-			local currentPos = self.timeline.CanvasPosition
-			self.timeline.CanvasPosition = Vector2.new(currentPos.X - delta.X, currentPos.Y)
-		end
-	end)
-
-	local inputEndedConnection2
-	inputEndedConnection2 = self.timeline.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton2 then
-			self.isPanning = false
-		end
-	end)
-
+	-- Zoom logic
 	local inputChangedConnection3
 	inputChangedConnection3 = UserInputService.InputChanged:Connect(function(input, gameProcessedEvent)
 		if gameProcessedEvent then return end
