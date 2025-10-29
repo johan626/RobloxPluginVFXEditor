@@ -5,12 +5,13 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Selection = game:GetService("Selection")
 
--- Load Modules
+-- Load Modules (All modules are siblings to this script)
 local UIManager = require(script.VFXEditorPlugin.UIManager)
 local TimelineManager = require(script.VFXEditorPlugin.TimelineManager)
 local PropertiesManager = require(script.VFXEditorPlugin.PropertiesManager)
 local PreviewManager = require(script.VFXEditorPlugin.PreviewManager)
 local Exporter = require(script.VFXEditorPlugin.Exporter)
+local DataManager = require(script.VFXEditorPlugin.DataManager)
 
 -- Plugin Initialization
 local toolbar = plugin:CreateToolbar("VFX Editor")
@@ -24,8 +25,9 @@ vfxEditorWidget.Title = "VFX Timeline Editor"
 
 -- Create UI and Managers
 local ui = UIManager.createUI(vfxEditorWidget)
-local timelineManager = TimelineManager.new(ui)
 local previewManager = PreviewManager.new(ui, ui.Timeline)
+local timelineManager = TimelineManager.new(ui, previewManager.playhead)
+local dataManager = DataManager.new(timelineManager)
 
 -- Connect Modules
 timelineManager.TrackSelected:Connect(function(track)
@@ -49,6 +51,14 @@ end)
 ui.ExportButton.MouseButton1Click:Connect(function()
 	local selected = Selection:Get()[1]
 	Exporter.export(ui.Timeline, selected)
+end)
+
+ui.SaveButton.MouseButton1Click:Connect(function()
+	dataManager:saveProject(plugin)
+end)
+
+ui.LoadButton.MouseButton1Click:Connect(function()
+	dataManager:loadProject(plugin)
 end)
 
 -- Toggle Widget Visibility
