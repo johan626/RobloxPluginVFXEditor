@@ -6,13 +6,14 @@ local Config = require(script.Parent.Config)
 local TimelineManager = {}
 TimelineManager.__index = TimelineManager
 
-function TimelineManager.new(ui)
+function TimelineManager.new(ui, playhead) -- Pass playhead
 	local self = setmetatable({}, TimelineManager)
 
 	self.ui = ui
 	self.timeline = ui.Timeline
+	self.playhead = playhead -- Store playhead
 
-	-- Configuration (from shared module)
+	-- Configuration
 	self.PIXELS_PER_SECOND = Config.PIXELS_PER_SECOND
 	self.SNAP_INTERVAL = Config.SNAP_INTERVAL
 	self.TOTAL_TIME = Config.TOTAL_TIME
@@ -25,14 +26,19 @@ function TimelineManager.new(ui)
 	self.startMouseX = 0
 	self.ghostTrack = nil
 	self.selectedTrack = nil
+	self.copiedTrackData = nil
+
+	-- Zoom & Pan State
+	self.zoom = 1 -- 1 = 100% zoom
+	self.isPanning = false
 
 	self.TrackSelected = {} -- Simple signal implementation
 	function self.TrackSelected:Connect(callback)
-		self.callback = callback
+		table.insert(self, callback)
 	end
 	function self.TrackSelected:Fire(...)
-		if self.callback then
-			self.callback(...)
+		for _, callback in ipairs(self) do
+			callback(...)
 		end
 	end
 
@@ -42,23 +48,61 @@ function TimelineManager.new(ui)
 	return self
 end
 
+function TimelineManager:clearTimeline()
+	for _, child in ipairs(self.timeline:GetChildren()) do
+		if child.Name == "TimelineTrack" then
+			child:Destroy()
+		end
+	end
+end
+
+function TimelineManager:redrawTimeline()
+	-- Clear existing grid and tracks
+	for _, child in ipairs(self.timeline:GetChildren()) do
+		if child.Name == "TimelineGridLine" or child.Name == "TimelineTimeLabel" then
+			child:Destroy()
+		end
+	end
+
+	-- Redraw grid with new zoom
+	self:drawTimelineGrid()
+
+	-- Update all tracks with new zoom
+	for _, child in ipairs(self.timeline:GetChildren()) do
+		if child:IsA("TextButton") and child.Name == "TimelineTrack" then
+			local startTime = child:GetAttribute("StartTime")
+			local duration = child:GetAttribute("Duration")
+
+			if startTime and duration then
+				child.Position = UDim2.new(0, startTime * self.PIXELS_PER_SECOND * self.zoom, 0, child.Position.Y.Offset)
+				child.Size = UDim2.new(0, duration * self.PIXELS_PER_SECOND * self.zoom, 0, child.Size.Y.Offset)
+			end
+		end
+	end
+end
+
+
 function TimelineManager:drawTimelineGrid()
+	local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
+	self.timeline.CanvasSize = UDim2.new(0, self.TOTAL_TIME * zoomedPixelsPerSecond, 1, 0)
+
 	for i = 0, self.TOTAL_TIME do
 		local line = Instance.new("Frame")
+		line.Name = "TimelineGridLine"
 		line.Size = UDim2.new(0, 1, 1, 0)
-		line.Position = UDim2.new(0, i * self.PIXELS_PER_SECOND, 0, 0)
+		line.Position = UDim2.new(0, i * zoomedPixelsPerSecond, 0, 0)
 		line.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
 		line.Parent = self.timeline
 
 		local timeLabel = Instance.new("TextLabel")
+		timeLabel.Name = "TimelineTimeLabel"
 		timeLabel.Size = UDim2.new(0, 50, 0, 20)
-		timeLabel.Position = UDim2.new(0, i * self.PIXELS_PER_SECOND - 25, 0, -2)
+		timeLabel.Position = UDim2.new(0, i * zoomedPixelsPerSecond - 25, 0, -2)
 		timeLabel.BackgroundTransparency = 1
 		timeLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 		timeLabel.Text = tostring(i) .. "s"
 		timeLabel.Parent = self.timeline
 	end
-	self.timeline.CanvasSize = UDim2.new(0, self.TOTAL_TIME * self.PIXELS_PER_SECOND, 1, 0)
 end
 
 function TimelineManager:findNextAvailableLane(newTrackStartTime, newTrackEndTime)
@@ -67,8 +111,9 @@ function TimelineManager:findNextAvailableLane(newTrackStartTime, newTrackEndTim
 		if child:IsA("TextButton") and child.Name == "TimelineTrack" then
 			local lane = child:GetAttribute("Lane")
 			if lane then
-				local startTime = child.Position.X.Offset / self.PIXELS_PER_SECOND
-				local endTime = startTime + (child.Size.X.Offset / self.PIXELS_PER_SECOND)
+				local startTime = child:GetAttribute("StartTime")
+				local duration = child:GetAttribute("Duration")
+				local endTime = startTime + duration
 				if not (newTrackEndTime <= startTime or newTrackStartTime >= endTime) then
 					lanes[lane] = true
 				end
@@ -79,6 +124,39 @@ function TimelineManager:findNextAvailableLane(newTrackStartTime, newTrackEndTim
 	while lanes[nextLane] do nextLane = nextLane + 1 end
 	return nextLane
 end
+
+function TimelineManager:createTrack(trackData)
+	local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
+
+	local nextLane = self:findNextAvailableLane(trackData.StartTime, trackData.StartTime + trackData.Duration)
+	local yPos = (nextLane - 1) * (self.TRACK_HEIGHT + self.LANE_PADDING) + self.LANE_PADDING
+
+	local newTrack = Instance.new("TextButton")
+	newTrack.Name = "TimelineTrack"
+	newTrack.Text = trackData.ComponentType or ""
+	newTrack.Size = UDim2.new(0, trackData.Duration * zoomedPixelsPerSecond, 0, self.TRACK_HEIGHT)
+	newTrack.Position = UDim2.new(0, trackData.StartTime * zoomedPixelsPerSecond, 0, yPos)
+	newTrack.Active = true -- For sinking input
+
+	if trackData.ComponentType == 'Light' then
+		newTrack.BackgroundColor3 = Config.TrackColors.Light
+	elseif trackData.ComponentType == 'Sound' then
+		newTrack.BackgroundColor3 = Config.TrackColors.Sound
+	elseif trackData.ComponentType == 'Particle' then
+		newTrack.BackgroundColor3 = Config.TrackColors.Particle
+	end
+
+	-- Store all data as attributes
+	for key, value in pairs(trackData) do
+		newTrack:SetAttribute(key, value)
+	end
+	newTrack:SetAttribute("Lane", nextLane)
+
+	newTrack.Parent = self.timeline
+	self:makeTrackInteractive(newTrack)
+	return newTrack
+end
+
 
 function TimelineManager:makeTrackInteractive(track)
 	-- Add selection outline
@@ -95,7 +173,7 @@ function TimelineManager:makeTrackInteractive(track)
 		end
 		self.selectedTrack = track
 		outline.Enabled = true
-		self.TrackSelected:Fire(track) -- Fire event
+		self.TrackSelected:Fire(track)
 	end)
 
 	-- Drag to move logic
@@ -108,7 +186,6 @@ function TimelineManager:makeTrackInteractive(track)
 			dragging = true
 			dragStart = input.Position.X
 			originalPosition = track.Position.X.Offset
-			input:PreventSinking()
 		end
 	end)
 
@@ -123,10 +200,13 @@ function TimelineManager:makeTrackInteractive(track)
 	track.InputEnded:Connect(function(input)
 		if dragging and input.UserInputType == Enum.UserInputType.MouseButton1 then
 			dragging = false
+			local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
 			local currentPos = track.Position.X.Offset
 			local originalY = track.Position.Y.Offset
-			local snappedStart = math.floor((currentPos / self.PIXELS_PER_SECOND) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
-			track.Position = UDim2.new(0, snappedStart * self.PIXELS_PER_SECOND, 0, originalY)
+
+			local snappedStart = math.floor((currentPos / zoomedPixelsPerSecond) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
+			track.Position = UDim2.new(0, snappedStart * zoomedPixelsPerSecond, 0, originalY)
+			track:SetAttribute("StartTime", snappedStart)
 		end
 	end)
 
@@ -137,6 +217,7 @@ function TimelineManager:makeTrackInteractive(track)
 		handle.Position = (side == "Left") and UDim2.new(0, -4, 0, 0) or UDim2.new(1, -4, 0, 0)
 		handle.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
 		handle.Parent = track
+		handle.Active = true -- For sinking input
 
 		local resizing = false
 		local resizeStart, originalSize, originalPos = 0, 0, 0
@@ -146,7 +227,6 @@ function TimelineManager:makeTrackInteractive(track)
 				resizeStart = input.Position.X
 				originalSize = track.Size.X.Offset
 				originalPos = track.Position.X.Offset
-				input:PreventSinking()
 			end
 		end)
 		handle.InputChanged:Connect(function(input)
@@ -163,12 +243,17 @@ function TimelineManager:makeTrackInteractive(track)
 		handle.InputEnded:Connect(function(input)
 			if resizing and input.UserInputType == Enum.UserInputType.MouseButton1 then
 				resizing = false
+				local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
 				local finalPos = track.Position.X.Offset
 				local finalSize = track.Size.X.Offset
-				local snappedStart = math.floor((finalPos / self.PIXELS_PER_SECOND) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
-				local snappedEnd = math.floor(((finalPos + finalSize) / self.PIXELS_PER_SECOND) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
-				track.Position = UDim2.new(0, snappedStart * self.PIXELS_PER_SECOND, 0, track.Position.Y.Offset)
-				track.Size = UDim2.new(0, (snappedEnd - snappedStart) * self.PIXELS_PER_SECOND, 0, track.Size.Y.Offset)
+
+				local snappedStart = math.floor((finalPos / zoomedPixelsPerSecond) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
+				local snappedEnd = math.floor(((finalPos + finalSize) / zoomedPixelsPerSecond) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
+
+				track.Position = UDim2.new(0, snappedStart * zoomedPixelsPerSecond, 0, track.Position.Y.Offset)
+				track.Size = UDim2.new(0, (snappedEnd - snappedStart) * zoomedPixelsPerSecond, 0, track.Size.Y.Offset)
+				track:SetAttribute("StartTime", snappedStart)
+				track:SetAttribute("Duration", snappedEnd - snappedStart)
 			end
 		end)
 	end
@@ -176,18 +261,25 @@ function TimelineManager:makeTrackInteractive(track)
 	createHandle("Right")
 end
 
+
 function TimelineManager:connectEvents()
+	local UserInputService = game:GetService("UserInputService")
+
 	local function startDrawing(componentType)
 		self.drawingMode = componentType
 	end
 
 	self.ui.AddLightButton.MouseButton1Click:Connect(function() startDrawing('Light') end)
 	self.ui.AddSoundButton.MouseButton1Click:Connect(function() startDrawing('Sound') end)
+	self.ui.AddParticleButton.MouseButton1Click:Connect(function() startDrawing('Particle') end)
 
-	self.timeline.InputBegan:Connect(function(input)
+	-- Drawing logic
+	local inputBeganConnection1
+	inputBeganConnection1 = self.timeline.InputBegan:Connect(function(input)
 		if self.drawingMode and input.UserInputType == Enum.UserInputType.MouseButton1 then
 			self.isDrawing = true
-			self.startMouseX = input.Position.X - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
+			local mouseX = input.Position.X - self.timeline.AbsolutePosition.X
+			self.startMouseX = mouseX + self.timeline.CanvasPosition.X
 			self.ghostTrack = Instance.new("Frame")
 			self.ghostTrack.Size = UDim2.new(0, 0, 0, self.TRACK_HEIGHT)
 			self.ghostTrack.Position = UDim2.new(0, self.startMouseX, 0, 50)
@@ -197,7 +289,8 @@ function TimelineManager:connectEvents()
 		end
 	end)
 
-	self.timeline.InputChanged:Connect(function(input)
+	local inputChangedConnection1
+	inputChangedConnection1 = self.timeline.InputChanged:Connect(function(input)
 		if self.isDrawing and input.UserInputType == Enum.UserInputType.MouseMovement then
 			local currentMouseX = input.Position.X - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
 			local width = currentMouseX - self.startMouseX
@@ -211,53 +304,129 @@ function TimelineManager:connectEvents()
 		end
 	end)
 
-	self.timeline.InputEnded:Connect(function(input)
+	local inputEndedConnection1
+	inputEndedConnection1 = self.timeline.InputEnded:Connect(function(input)
 		if self.isDrawing and input.UserInputType == Enum.UserInputType.MouseButton1 then
 			self.isDrawing = false
 			if self.ghostTrack then
+				local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
 				local finalPos = self.ghostTrack.Position.X.Offset
 				local finalSize = self.ghostTrack.Size.X.Offset
 
-				local snappedStart = math.floor((finalPos / self.PIXELS_PER_SECOND) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
-				local snappedEnd = math.floor(((finalPos + finalSize) / self.PIXELS_PER_SECOND) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
+				local snappedStart = math.floor((finalPos / zoomedPixelsPerSecond) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
+				local snappedDuration = math.floor((finalSize / zoomedPixelsPerSecond) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
 
-				local pixelStart = snappedStart * self.PIXELS_PER_SECOND
-				local pixelWidth = (snappedEnd - snappedStart) * self.PIXELS_PER_SECOND
-
-				if pixelWidth > 0 then
-					local nextLane = self:findNextAvailableLane(snappedStart, snappedEnd)
-					local yPos = (nextLane - 1) * (self.TRACK_HEIGHT + self.LANE_PADDING) + self.LANE_PADDING
-
-					local newTrack = Instance.new("TextButton")
-					newTrack.Name = "TimelineTrack"
-					newTrack.Text = self.drawingMode or ""
-					newTrack.Size = UDim2.new(0, pixelWidth, 0, self.TRACK_HEIGHT)
-					newTrack.Position = UDim2.new(0, pixelStart, 0, yPos)
-
+				if snappedDuration > 0 then
+					local trackData = {
+						ComponentType = self.drawingMode,
+						StartTime = snappedStart,
+						Duration = snappedDuration,
+					}
+					-- Add default attributes based on type
 					if self.drawingMode == 'Light' then
-						newTrack.BackgroundColor3 = Color3.fromRGB(200, 180, 80)
-						newTrack:SetAttribute("ComponentType", "Light")
-						newTrack:SetAttribute("Enabled", true)
-						newTrack:SetAttribute("Brightness", 1)
-						newTrack:SetAttribute("Color", Color3.fromRGB(255, 255, 255))
-						newTrack:SetAttribute("Range", 8)
-						newTrack:SetAttribute("Lane", nextLane)
+						trackData.Enabled = true
+						trackData.Brightness = 1
+						trackData.Color = Color3.fromRGB(255, 255, 255)
+						trackData.Range = 8
 					elseif self.drawingMode == 'Sound' then
-						newTrack.BackgroundColor3 = Color3.fromRGB(80, 180, 200)
-						newTrack:SetAttribute("ComponentType", "Sound")
-						newTrack:SetAttribute("SoundId", "rbxassetid://")
-						newTrack:SetAttribute("Volume", 0.5)
-						newTrack:SetAttribute("PlaybackSpeed", 1)
-						newTrack:SetAttribute("Lane", nextLane)
+						trackData.SoundId = "rbxassetid://"
+						trackData.Volume = 0.5
+						trackData.PlaybackSpeed = 1
+					elseif self.drawingMode == 'Particle' then
+						trackData.Enabled = true
+						trackData.Rate = 20
+						trackData.Lifetime = "1 2" -- NumberRange
+						trackData.Size = "0,1;1,0" -- NumberSequence
+						trackData.Color = "0,1,1,1;1,1,1,1" -- ColorSequence
+						trackData.SpreadAngle = 360
+						trackData.Rotation = "0 360" -- NumberRange
+						trackData.Speed = "5 10" -- NumberRange
 					end
-
-					newTrack.Parent = self.timeline
-					self:makeTrackInteractive(newTrack)
+					self:createTrack(trackData)
 				end
-
 				self.ghostTrack:Destroy()
 			end
 			self.drawingMode = nil
+		end
+	end)
+
+	-- Copy/Paste logic
+	local inputBeganConnection2
+	inputBeganConnection2 = UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+		if gameProcessedEvent then return end
+		local isCtrlDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+
+		if isCtrlDown and input.KeyCode == Enum.KeyCode.C then
+			if self.selectedTrack then
+				local data = {}
+				for _, attr in ipairs(self.selectedTrack:GetAttributes()) do
+					data[attr] = self.selectedTrack:GetAttribute(attr)
+				end
+				self.copiedTrackData = data
+				print("Track copied!")
+			end
+		end
+
+		if isCtrlDown and input.KeyCode == Enum.KeyCode.V then
+			if self.copiedTrackData then
+				local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
+				-- Paste at playhead position
+				local playheadTime = self.playhead.Position.X.Offset / zoomedPixelsPerSecond
+				local newData = {}
+				for k, v in pairs(self.copiedTrackData) do newData[k] = v end
+				newData.StartTime = playheadTime
+				self:createTrack(newData)
+				print("Track pasted!")
+			end
+		end
+	end)
+
+	-- Zoom & Pan logic
+	local lastPanPosition
+	local inputBeganConnection3
+	inputBeganConnection3 = self.timeline.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton2 then -- Right mouse for pan
+			self.isPanning = true
+			lastPanPosition = input.Position
+		end
+	end)
+
+	local inputChangedConnection2
+	inputChangedConnection2 = self.timeline.InputChanged:Connect(function(input)
+		if self.isPanning and input.UserInputType == Enum.UserInputType.MouseMovement then
+			local delta = input.Position - lastPanPosition
+			lastPanPosition = input.Position
+			local currentPos = self.timeline.CanvasPosition
+			self.timeline.CanvasPosition = Vector2.new(currentPos.X - delta.X, currentPos.Y)
+		end
+	end)
+
+	local inputEndedConnection2
+	inputEndedConnection2 = self.timeline.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton2 then
+			self.isPanning = false
+		end
+	end)
+
+	local inputChangedConnection3
+	inputChangedConnection3 = UserInputService.InputChanged:Connect(function(input, gameProcessedEvent)
+		if gameProcessedEvent then return end
+		if input.UserInputType == Enum.UserInputType.MouseWheel then
+			local isCtrlDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+			if isCtrlDown then
+				-- Calculate mouse position relative to timeline content
+				local mousePos = UserInputService:GetMouseLocation()
+				local relativeMouseX = mousePos.X - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
+				local timeAtMouse = relativeMouseX / (self.PIXELS_PER_SECOND * self.zoom)
+
+				-- Apply zoom
+				self.zoom = math.clamp(self.zoom - input.Position.Z * 0.2, 0.2, 10)
+				self:redrawTimeline()
+
+				-- Adjust canvas position to keep the point under the mouse stationary
+				local newMouseX = timeAtMouse * (self.PIXELS_PER_SECOND * self.zoom)
+				self.timeline.CanvasPosition = Vector2.new(newMouseX - (mousePos.X - self.timeline.AbsolutePosition.X), self.timeline.CanvasPosition.Y)
+			end
 		end
 	end)
 end
