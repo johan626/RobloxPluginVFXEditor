@@ -49,6 +49,20 @@ function UIManager.createUI(widget)
 	ui.ExportButton.Text = "Export"
 	ui.ExportButton.Parent = ui.TopBar
 
+	ui.SaveButton = Instance.new("TextButton")
+	ui.SaveButton.Name = "SaveButton"
+	ui.SaveButton.Size = UDim2.new(0, 80, 0, 30)
+	ui.SaveButton.Position = UDim2.new(0, 430, 0.5, -15)
+	ui.SaveButton.Text = "Save"
+	ui.SaveButton.Parent = ui.TopBar
+
+	ui.LoadButton = Instance.new("TextButton")
+	ui.LoadButton.Name = "LoadButton"
+	ui.LoadButton.Size = UDim2.new(0, 80, 0, 30)
+	ui.LoadButton.Position = UDim2.new(0, 520, 0.5, -15)
+	ui.LoadButton.Text = "Load"
+	ui.LoadButton.Parent = ui.TopBar
+
 	-- Content Area
 	local contentArea = Instance.new("Frame")
 	contentArea.Name = "ContentArea"
@@ -98,6 +112,13 @@ function UIManager.createUI(widget)
 	ui.AddSoundButton.Position = UDim2.new(0.5, -ui.AddSoundButton.Size.X.Offset/2, 0, 50)
 	ui.AddSoundButton.Text = "+ Sound"
 	ui.AddSoundButton.Parent = ui.ComponentLibrary
+
+	ui.AddParticleButton = Instance.new("TextButton")
+	ui.AddParticleButton.Name = "AddParticleButton"
+	ui.AddParticleButton.Size = UDim2.new(1, -10, 0, 30)
+	ui.AddParticleButton.Position = UDim2.new(0.5, -ui.AddParticleButton.Size.X.Offset/2, 0, 90)
+	ui.AddParticleButton.Text = "+ Particle"
+	ui.AddParticleButton.Parent = ui.ComponentLibrary
 
 	return ui
 end
