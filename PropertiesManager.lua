@@ -6,7 +6,8 @@ local PropertiesManager = {}
 local PROPERTY_ORDER = {
 	"ComponentType", "Lane", "Enabled",
 	"Brightness", "Color", "Range",
-	"SoundId", "Volume", "PlaybackSpeed"
+	"SoundId", "Volume", "PlaybackSpeed",
+	"Rate", "Lifetime", "Size", "SpreadAngle"
 }
 
 function PropertiesManager.populate(panel, track)
