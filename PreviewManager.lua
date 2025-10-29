@@ -4,6 +4,7 @@
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
 local Config = require(script.Parent.Config)
+local Utils = require(script.Parent.Utils)
 
 local PreviewManager = {}
 PreviewManager.__index = PreviewManager
@@ -27,6 +28,17 @@ function PreviewManager.new(ui, timeline)
 	floor.Size = Vector3.new(40, 1, 40)
 	floor.Anchored = true
 	floor.Parent = self.worldModel
+
+	-- Add a spotlight to illuminate the scene
+	local lightAttachment = Instance.new("Attachment")
+	lightAttachment.Position = Vector3.new(0, 15, 0)
+	local spotLight = Instance.new("SpotLight")
+	spotLight.Face = Enum.NormalId.Bottom
+	spotLight.Angle = 60
+	spotLight.Range = 40
+	spotLight.Brightness = 2
+	spotLight.Parent = lightAttachment
+	lightAttachment.Parent = self.worldModel
 
 	-- State
 	self.isPlaying = false
@@ -76,11 +88,27 @@ function PreviewManager:update(deltaTime)
 					sound.PlaybackSpeed = track:GetAttribute("PlaybackSpeed")
 					sound.Parent = workspace -- Play in the main workspace
 					sound:Play()
-					Debris:AddItem(sound, track:GetAttribute("Duration") + 5) -- Add to debris
+					local duration = track.Size.X.Offset / self.Config.PIXELS_PER_SECOND
+					Debris:AddItem(sound, duration + 5) -- Add to debris
 					self.previewInstances[track] = true -- Just mark as played
+				elseif componentType == "Particle" then
+					local attachment = Instance.new("Attachment")
+					local emitter = Instance.new("ParticleEmitter")
+					emitter.Enabled = track:GetAttribute("Enabled")
+					emitter.Rate = track:GetAttribute("Rate")
+					emitter.Lifetime = Utils.parseNumberRange(track:GetAttribute("Lifetime"))
+					emitter.Size = Utils.parseNumberSequence(track:GetAttribute("Size"))
+					emitter.Color = Utils.parseColorSequence(track:GetAttribute("Color"))
+					local spreadAngle = track:GetAttribute("SpreadAngle")
+					local spreadAngleParts = spreadAngle:split(" ")
+					emitter.SpreadAngle = Vector2.new(tonumber(spreadAngleParts[1]), tonumber(spreadAngleParts[2]))
+
+					emitter.Parent = attachment
+					attachment.Parent = self.worldModel
+					self.previewInstances[track] = attachment
 				end
 			elseif not isActive and instanceExists then
-				if self.previewInstances[track]:IsA("Instance") then
+				if typeof(self.previewInstances[track]) == "Instance" then
 					self.previewInstances[track]:Destroy()
 				end
 				self.previewInstances[track] = nil
@@ -107,7 +135,9 @@ function PreviewManager:stop()
 	self.currentTime = 0
 	self.playhead.Position = UDim2.new(0, 0, 0, 0)
 	for track, instance in pairs(self.previewInstances) do
-		instance:Destroy()
+		if typeof(instance) == "Instance" then
+			instance:Destroy()
+		end
 	end
 	self.previewInstances = {}
 end
