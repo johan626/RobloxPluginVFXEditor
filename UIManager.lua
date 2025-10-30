@@ -62,10 +62,14 @@ function UIManager.createUI(widget)
 	local ui = {}
 	local theme = Config.Theme
 
-	-- Signal for requesting track creation
+	-- Signals
 	ui.CreateTrackRequested = {}
 	function ui.CreateTrackRequested:Connect(callback) table.insert(self, callback) end
 	function ui.CreateTrackRequested:Fire(...) for _, cb in ipairs(self) do cb(...) end end
+
+	ui.GroupColorChanged = {}
+	function ui.GroupColorChanged:Connect(callback) table.insert(self, callback) end
+	function ui.GroupColorChanged:Fire(...) for _, cb in ipairs(self) do cb(...) end end
 
 	-- Main UI Structure
 	ui.MainFrame = Instance.new("Frame")
@@ -200,7 +204,7 @@ function UIManager.createUI(widget)
 	styleButton(ui.ResetButton)
 	ui.ResetButton.BackgroundColor3 = theme.AccentDestructive
 
-	-- Content Area & Panels... (rest of the file is unchanged)
+	-- Content Area & Panels
 	local contentArea = Instance.new("Frame")
 	contentArea.Name = "ContentArea"; contentArea.Size = UDim2.new(1, 0, 1, -40); contentArea.Position = UDim2.new(0, 0, 0, 40); contentArea.Parent = ui.MainFrame
 	ui.ComponentLibrary = Instance.new("Frame")
@@ -224,12 +228,15 @@ function UIManager.createUI(widget)
 	ui.DialogMessage = Instance.new("TextLabel"); ui.DialogMessage.Name = "Message"; ui.DialogMessage.Size = UDim2.new(1, -20, 0, 60); ui.DialogMessage.Position = UDim2.new(0, 10, 0, 40); ui.DialogMessage.Text = "Are you sure?"; ui.DialogMessage.TextColor3 = Color3.fromRGB(220, 220, 220); ui.DialogMessage.TextWrapped = true; ui.DialogMessage.BackgroundTransparency = 1; ui.DialogMessage.Parent = dialog
 	ui.ConfirmButton = Instance.new("TextButton"); ui.ConfirmButton.Name = "ConfirmButton"; ui.ConfirmButton.Size = UDim2.new(0, 100, 0, 30); ui.ConfirmButton.Position = UDim2.new(0.5, -110, 1, -40); ui.ConfirmButton.Text = "Confirm"; ui.ConfirmButton.Parent = dialog; styleButton(ui.ConfirmButton)
 	ui.CancelButton = Instance.new("TextButton"); ui.CancelButton.Name = "CancelButton"; ui.CancelButton.Size = UDim2.new(0, 100, 0, 30); ui.CancelButton.Position = UDim2.new(0.5, 10, 1, -40); ui.CancelButton.Text = "Cancel"; ui.CancelButton.Parent = dialog; styleButton(ui.CancelButton)
+
+	-- Context Menu
 	ui.ContextMenu = Instance.new("Frame"); ui.ContextMenu.Name = "ContextMenu"; ui.ContextMenu.Size = UDim2.new(0, 150, 0, 90); ui.ContextMenu.BackgroundColor3 = Color3.fromRGB(45, 45, 45); ui.ContextMenu.BorderSizePixel = 1; ui.ContextMenu.BorderColor3 = Color3.fromRGB(100,100,100); ui.ContextMenu.Visible = false; ui.ContextMenu.ZIndex = 20; ui.ContextMenu.Parent = ui.MainFrame
 	local contextLayout = Instance.new("UIListLayout"); contextLayout.Padding = UDim.new(0, 2); contextLayout.SortOrder = Enum.SortOrder.LayoutOrder; contextLayout.Parent = ui.ContextMenu
 
 	ui.CreateTrackButton = Instance.new("TextButton"); ui.CreateTrackButton.Name = "CreateTrackButton"; ui.CreateTrackButton.LayoutOrder = 1; ui.CreateTrackButton.Size = UDim2.new(1, -4, 0, 28); ui.CreateTrackButton.Text = "Create New Track  >"; ui.CreateTrackButton.Parent = ui.ContextMenu; styleButton(ui.CreateTrackButton)
 	ui.CopyButton = Instance.new("TextButton"); ui.CopyButton.Name = "CopyButton"; ui.CopyButton.LayoutOrder = 2; ui.CopyButton.Size = UDim2.new(1, -4, 0, 28); ui.CopyButton.Text = "Copy"; ui.CopyButton.Parent = ui.ContextMenu; styleButton(ui.CopyButton)
 	ui.PasteButton = Instance.new("TextButton"); ui.PasteButton.Name = "PasteButton"; ui.PasteButton.LayoutOrder = 3; ui.PasteButton.Size = UDim2.new(1, -4, 0, 28); ui.PasteButton.Text = "Paste"; ui.PasteButton.Parent = ui.ContextMenu; styleButton(ui.PasteButton)
+	ui.SetGroupColorButton = Instance.new("TextButton"); ui.SetGroupColorButton.Name = "SetGroupColorButton"; ui.SetGroupColorButton.LayoutOrder = 4; ui.SetGroupColorButton.Size = UDim2.new(1, -4, 0, 28); ui.SetGroupColorButton.Text = "Set Group Color  >"; ui.SetGroupColorButton.Parent = ui.ContextMenu; styleButton(ui.SetGroupColorButton)
 
 	-- Sub-menu for creating tracks
 	ui.CreateTrackSubMenu = Instance.new("ScrollingFrame")
@@ -262,11 +269,45 @@ function UIManager.createUI(widget)
 
 		button.MouseButton1Click:Connect(function()
 			ui.CreateTrackRequested:Fire(componentType)
-			ui.ContextMenu.Visible = false -- Hide menu after selection
+			ui.ContextMenu.Visible = false
 		end)
 	end
 
-	-- Logic to show/hide the sub-menu with debounce
+	-- Sub-menu for group colors
+	ui.GroupColorSubMenu = Instance.new("Frame")
+	ui.GroupColorSubMenu.Name = "GroupColorSubMenu"
+	ui.GroupColorSubMenu.Size = UDim2.new(0, 150, 0, 120)
+	ui.GroupColorSubMenu.Position = UDim2.new(1, 2, 0, 0)
+	ui.GroupColorSubMenu.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+	ui.GroupColorSubMenu.BorderSizePixel = 1
+	ui.GroupColorSubMenu.BorderColor3 = Color3.fromRGB(100,100,100)
+	ui.GroupColorSubMenu.Visible = false
+	ui.GroupColorSubMenu.ZIndex = 21
+	ui.GroupColorSubMenu.Parent = ui.ContextMenu
+	local colorGridLayout = Instance.new("UIGridLayout")
+	colorGridLayout.CellPadding = UDim2.new(0, 4, 0, 4)
+	colorGridLayout.CellSize = UDim2.new(0, 24, 0, 24)
+	colorGridLayout.Parent = ui.GroupColorSubMenu
+
+	ui.GroupColorButtons = {}
+	for colorName, colorValue in pairs(Config.GroupColors) do
+		local button = Instance.new("TextButton")
+		button.Name = colorName .. "ColorButton"
+		button.Size = UDim2.new(0, 24, 0, 24)
+		button.BackgroundColor3 = colorValue
+		button.Text = ""
+		button.Parent = ui.GroupColorSubMenu
+		local corner = Instance.new("UICorner"); corner.Parent = button
+
+		button.MouseButton1Click:Connect(function()
+			ui.GroupColorChanged:Fire(colorValue)
+			ui.ContextMenu.Visible = false
+		end)
+		ui.GroupColorButtons[colorName] = button
+	end
+
+	-- Logic to show/hide the sub-menus with debounce
+	local activeSubMenu = nil
 	local hideSubMenuTask = nil
 	local function cancelHide()
 		if hideSubMenuTask then
@@ -277,24 +318,32 @@ function UIManager.createUI(widget)
 	local function scheduleHide()
 		cancelHide()
 		hideSubMenuTask = task.delay(0.1, function()
-			if ui.CreateTrackSubMenu then
-				ui.CreateTrackSubMenu.Visible = false
+			if activeSubMenu then
+				activeSubMenu.Visible = false
+				activeSubMenu = nil
 			end
 			hideSubMenuTask = nil
 		end)
 	end
 
-	ui.CreateTrackButton.MouseEnter:Connect(function()
+	local function showSubMenu(subMenu)
 		cancelHide()
-		ui.CreateTrackSubMenu.Visible = true
-	end)
+		if activeSubMenu and activeSubMenu ~= subMenu then
+			activeSubMenu.Visible = false
+		end
+		activeSubMenu = subMenu
+		activeSubMenu.Visible = true
+	end
+
+	ui.CreateTrackButton.MouseEnter:Connect(function() showSubMenu(ui.CreateTrackSubMenu) end)
+	ui.SetGroupColorButton.MouseEnter:Connect(function() showSubMenu(ui.GroupColorSubMenu) end)
 	ui.CreateTrackSubMenu.MouseEnter:Connect(cancelHide)
+	ui.GroupColorSubMenu.MouseEnter:Connect(cancelHide)
 
 	ui.ContextMenu.MouseLeave:Connect(scheduleHide)
-	ui.CreateTrackSubMenu.MouseLeave:Connect(scheduleHide)
 
-	ui.CopyButton.MouseEnter:Connect(function() ui.CreateTrackSubMenu.Visible = false end)
-	ui.PasteButton.MouseEnter:Connect(function() ui.CreateTrackSubMenu.Visible = false end)
+	ui.CopyButton.MouseEnter:Connect(function() if activeSubMenu then activeSubMenu.Visible = false; activeSubMenu=nil end end)
+	ui.PasteButton.MouseEnter:Connect(function() if activeSubMenu then activeSubMenu.Visible = false; activeSubMenu=nil end end)
 
 	return ui
 end
