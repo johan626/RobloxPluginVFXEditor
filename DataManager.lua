@@ -1,134 +1,91 @@
 -- DataManager.lua (ModuleScript)
 -- Path: ServerScriptService/VFXEditor/DataManager.lua
+-- Handles saving and loading timeline data.
 
 local DataManager = {}
 DataManager.__index = DataManager
 
-function DataManager.new(timelineManager)
+-- Key for storing plugin data
+local STORAGE_KEY = "VFXEditor_TimelineData"
+
+function DataManager.new(plugin, timelineManager)
 	local self = setmetatable({}, DataManager)
+	self.plugin = plugin
 	self.timelineManager = timelineManager
 	return self
 end
 
--- == SERIALIZERS ==
--- Mengubah berbagai tipe data menjadi format string yang dapat disimpan.
+--[[
+	Serializes all tracks on the timeline into a Lua table.
+	Gathers all attributes from each track UI object.
+]]
+function DataManager:saveTimeline()
+	local tracksData = {}
+	local timelineUI = self.timelineManager.timeline
 
-function DataManager:serializeColor3(color)
-	return string.format("Color3.fromRGB(%.f, %.f, %.f)", color.R * 255, color.G * 255, color.B * 255)
-end
-
-function DataManager:serializeColorSequence(sequence)
-	local points = {}
-	for _, keypoint in ipairs(sequence.Keypoints) do
-		local c = keypoint.Value
-		table.insert(points, string.format("ColorSequenceKeypoint.new(%.2f, Color3.fromRGB(%.f, %.f, %.f))",
-			keypoint.Time, c.R * 255, c.G * 255, c.B * 255))
-	end
-	return "ColorSequence.new({" .. table.concat(points, ", ") .. "})"
-end
-
-function DataManager:serializeNumberSequence(sequence)
-	local points = {}
-	for _, keypoint in ipairs(sequence.Keypoints) do
-		table.insert(points, string.format("NumberSequenceKeypoint.new(%.2f, %.2f)", keypoint.Time, keypoint.Value))
-	end
-	return "NumberSequence.new({" .. table.concat(points, ", ") .. "})"
-end
-
-function DataManager:serializeNumberRange(range)
-	return string.format("NumberRange.new(%.2f, %.2f)", range.Min, range.Max)
-end
-
-
--- Mengubah tabel data mentah menjadi string yang diformat dengan baik untuk ModuleScript
-function DataManager:formatData(trackData)
-	local lines = {"return {"}
-	for _, data in ipairs(trackData) do
-		table.insert(lines, "\t{")
-		for key, value in pairs(data) do
-			local formattedValue
-			local valueType = typeof(value)
-
-			if valueType == "string" then
-				formattedValue = string.format("%q", value)
-			elseif valueType == "Color3" then
-				formattedValue = self:serializeColor3(value)
-			elseif valueType == "ColorSequence" then
-				formattedValue = self:serializeColorSequence(value)
-			elseif valueType == "NumberSequence" then
-				formattedValue = self:serializeNumberSequence(value)
-			elseif valueType == "NumberRange" then
-				formattedValue = self:serializeNumberRange(value)
-			else
-				formattedValue = tostring(value)
-			end
-			table.insert(lines, string.format("\t\t%s = %s,", key, formattedValue))
-		end
-		table.insert(lines, "\t},")
-	end
-	table.insert(lines, "}")
-	return table.concat(lines, "\n")
-end
-
--- Fungsi utama untuk menyimpan proyek
-function DataManager:saveProject(plugin)
-	local selection = game:GetService("Selection"):Get()
-	if #selection ~= 1 then
-		warn("Silakan pilih SATU folder atau lokasi tujuan di Explorer.")
-		return
-	end
-	local target = selection[1]
-
-	-- Kumpulkan data dari timeline
-	local allTracksData = {}
-	for _, track in ipairs(self.timelineManager.timeline:GetChildren()) do
+	for _, track in ipairs(timelineUI:GetChildren()) do
 		if track:IsA("TextButton") and track.Name == "TimelineTrack" then
 			local data = {}
-			for _, key in ipairs(track:GetAttributes()) do
-				data[key] = track:GetAttribute(key)
+			-- Get all attributes from the track instance
+			for attributeName, attributeValue in pairs(track:GetAttributes()) do
+				data[attributeName] = attributeValue
 			end
-			table.insert(allTracksData, data)
+			table.insert(tracksData, data)
 		end
 	end
 
-	if #allTracksData == 0 then
-		warn("Timeline kosong. Tidak ada yang bisa disimpan.")
-		return
+	-- The HttpService is used for robustly encoding the table as a JSON string.
+	-- This prevents issues with complex data types that Roblox settings might not handle well.
+	local HttpService = game:GetService("HttpService")
+	local success, encodedData = pcall(function()
+		return HttpService:JSONEncode(tracksData)
+	end)
+
+	if success then
+		self.plugin:SetSetting(STORAGE_KEY, encodedData)
+		print("VFX Timeline Saved!")
+		return true
+	else
+		warn("Failed to encode timeline data:", encodedData)
+		return false
 	end
-
-	-- Format data dan buat skrip
-	local formattedContent = self:formatData(allTracksData)
-	local newScript = Instance.new("ModuleScript")
-	newScript.Name = "VFXData"
-	newScript.Source = formattedContent
-	newScript.Parent = target
-
-	print("Proyek berhasil disimpan ke " .. target:GetFullName())
 end
 
--- Fungsi utama untuk memuat proyek
-function DataManager:loadProject(plugin)
-	local selection = game:GetService("Selection"):Get()
-	if #selection ~= 1 or not selection[1]:IsA("ModuleScript") then
-		warn("Silakan pilih SATU ModuleScript proyek untuk dimuat.")
-		return
-	end
-	local script = selection[1]
-
-	-- Muat data dari skrip (gunakan pcall untuk keamanan)
-	local success, trackData = pcall(require, script)
-	if not success or not trackData then
-		warn("Gagal memuat data dari skrip. Pastikan formatnya benar.")
-		return
+--[[
+	Deserializes timeline data from plugin settings and returns it.
+	The main script will then use this data to clear and repopulate the timeline.
+]]
+function DataManager:loadTimeline()
+	local encodedData = self.plugin:GetSetting(STORAGE_KEY)
+	if not encodedData or encodedData == "" then
+		print("No saved VFX data found.")
+		return nil
 	end
 
-	-- Bersihkan timeline dan buat ulang trek
-	self.timelineManager:clearTimeline()
-	for _, data in ipairs(trackData) do
-		self.timelineManager:createTrack(data)
-	end
+	local HttpService = game:GetService("HttpService")
+	local success, tracksData = pcall(function()
+		return HttpService:JSONDecode(encodedData)
+	end)
 
-	print("Proyek berhasil dimuat dari " .. script:GetFullName())
+	if success then
+		print("VFX Timeline Loaded!")
+		return tracksData
+	else
+		warn("Failed to decode timeline data:", tracksData)
+		-- This might happen if the saved data is corrupted or in an old format.
+		-- Clearing the corrupted setting to prevent future errors.
+		self.plugin:SetSetting(STORAGE_KEY, nil)
+		return nil
+	end
 end
+
+--[[
+    Checks if there is any saved data.
+    Used to determine if the "Load" button should be enabled.
+]]
+function DataManager:hasSavedData()
+	return self.plugin:GetSetting(STORAGE_KEY) ~= nil
+end
+
 
 return DataManager
