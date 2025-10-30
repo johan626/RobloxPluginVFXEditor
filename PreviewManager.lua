@@ -64,6 +64,13 @@ function PreviewManager:updatePreviewAtTime(time)
 	local activeTracks = {}
 	for _, track in ipairs(self.timeline:GetChildren()) do
 		if track:IsA("TextButton") and track.Name == "TimelineTrack" then
+			local attributes = track:GetAttributes()
+
+			-- Sounds are handled entirely by _handleSounds during playback, not scrubbing.
+			if attributes.ComponentType == "Sound" then
+				continue
+			end
+
 			local startTime = track:GetAttribute("StartTime")
 			local duration = track:GetAttribute("Duration")
 			local endTime = startTime + duration
@@ -72,7 +79,6 @@ function PreviewManager:updatePreviewAtTime(time)
 				activeTracks[track] = true
 
 				local instance = self.previewInstances[track]
-				local attributes = track:GetAttributes()
 				local timeIntoTrack = time - startTime
 
 				if not instance then
@@ -95,7 +101,6 @@ function PreviewManager:updatePreviewAtTime(time)
 	end
 end
 
--- (The rest of the file remains the same)
 function PreviewManager:_createPreviewInstance(track, previewPosition)
 	local attributes = track:GetAttributes()
 	local componentType = attributes.ComponentType
@@ -130,18 +135,20 @@ function PreviewManager:_createPreviewInstance(track, previewPosition)
 		local trail = Instance.new("Trail"); trail.Attachment0 = attachment0; trail.Attachment1 = attachment1; trail.Parent = trailPart
 		trailPart.Parent = self.previewFolder
 		instance = trailPart
-	elseif componentType == "Sound" then
-		instance = "Sound" 
 	end
 
 	return instance
 end
 
 function PreviewManager:_updateInstanceProperties(instance, attributes, timeIntoTrack, duration, previewPosition)
+	if not instance or typeof(instance) ~= "Instance" then return end
+
 	local componentType = attributes.ComponentType
 	local progress = timeIntoTrack / duration
 
 	if componentType == "Light" or componentType == "SpotLight" or componentType == "SurfaceLight" then
+		if not (instance:IsA("Attachment") and instance:FindFirstChildOfClass("Light")) then return end
+
 		instance.WorldPosition = previewPosition
 		local light = instance:FindFirstChildOfClass("Light")
 		light.Enabled = attributes.Enabled
@@ -154,6 +161,8 @@ function PreviewManager:_updateInstanceProperties(instance, attributes, timeInto
 			light.Face = Utils.parseEnum(Enum.NormalId, attributes.Face) or Enum.NormalId.Front
 		end
 	elseif componentType == "Beam" then
+		if not instance:IsA("Beam") then return end
+
 		instance.Enabled = attributes.Enabled
 		instance.Color = Utils.parseColorSequence(attributes.Color)
 		instance.Width0 = attributes.Width0
@@ -173,6 +182,8 @@ function PreviewManager:_updateInstanceProperties(instance, attributes, timeInto
 		instance.Attachment0.WorldPosition = previewPosition + Utils.parseVector3(attributes.Attachment0Offset)
 		instance.Attachment1.WorldPosition = previewPosition + Utils.parseVector3(attributes.Attachment1Offset)
 	elseif componentType == "Particle" then
+		if not (instance:IsA("Attachment") and instance:FindFirstChildOfClass("ParticleEmitter")) then return end
+
 		instance.WorldPosition = previewPosition
 		local emitter = instance:FindFirstChildOfClass("ParticleEmitter")
 		emitter:Clear()
@@ -199,6 +210,8 @@ function PreviewManager:_updateInstanceProperties(instance, attributes, timeInto
 		emitter:Emit(math.ceil(attributes.Rate * 0.1))
 
 	elseif componentType == "Trail" then
+		if not (instance:IsA("Part") and instance:FindFirstChildOfClass("Trail")) then return end
+
 		local startPos = previewPosition + Utils.parseVector3(attributes.StartPosition)
 		local endPos = previewPosition + Utils.parseVector3(attributes.EndPosition)
 		instance.CFrame = CFrame.new(startPos:Lerp(endPos, progress))
@@ -244,10 +257,16 @@ function PreviewManager:stop()
 	self:_handleSounds(false)
 	if self.previewFolder then
 		self.previewFolder:Destroy()
-		self.previewFolder = nil
 	end
+	-- Clear all visual (non-sound) instances
+	for track, instance in pairs(self.previewInstances) do
+		if typeof(instance) == "Instance" then
+			instance:Destroy()
+		end
+		self.previewInstances[track] = nil
+	end
+
 	self:updatePreviewAtTime(0)
-	self.previewInstances = {}
 end
 
 function PreviewManager:pause()
@@ -306,6 +325,7 @@ function PreviewManager:connectEvents()
 
 	self.timeline.InputChanged:Connect(function(input)
 		if isScrubbing and input.UserInputType == Enum.UserInputType.MouseMovement then
+			if not input.Position then return end
 			local mouseX = input.Position.X - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
 			if self.timelineManager then
 				local newTime = math.clamp(mouseX / (self.Config.PIXELS_PER_SECOND * self.timelineManager.zoom), 0, self.Config.TOTAL_TIME)
