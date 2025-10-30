@@ -35,7 +35,7 @@ local historyManager = HistoryManager.new()
 
 -- Decoupled Initialization to prevent circular dependency
 local previewManager = PreviewManager.new(ui)
-local timelineManager = TimelineManager.new(ui, previewManager, historyManager)
+local timelineManager = TimelineManager.new(ui, previewManager.playhead, historyManager) -- Pass the playhead UI object, not the manager
 previewManager:setTimelineManager(timelineManager) -- Now inject the dependency
 
 local dataManager = DataManager.new(plugin, timelineManager)
