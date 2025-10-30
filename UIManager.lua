@@ -1,23 +1,79 @@
 -- UIManager.lua (ModuleScript)
 -- Path: ServerScriptService/VFXEditor/UIManager.lua
 
+local Config = require(script.Parent.Config)
 local UIManager = {}
+
+-- Fungsi Bantuan untuk Gaya UI
+local function styleButton(button)
+	local theme = Config.Theme
+	button.BackgroundColor3 = theme.Button
+	button.TextColor3 = theme.Text
+	button.Font = theme.Font
+	button.TextSize = theme.FontSize
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 4)
+	corner.Parent = button
+
+	button.MouseEnter:Connect(function()
+		button.BackgroundColor3 = theme.ButtonHover
+	end)
+	button.MouseLeave:Connect(function()
+		button.BackgroundColor3 = theme.Button
+	end)
+	button.MouseButton1Down:Connect(function()
+		button.BackgroundColor3 = theme.ButtonPressed
+	end)
+	button.MouseButton1Up:Connect(function()
+		button.BackgroundColor3 = theme.ButtonHover
+	end)
+end
+
+
+-- Fungsi bantuan baru untuk membuat baris tombol komponen
+local function createComponentButton(parent, name, yPos)
+	local theme = Config.Theme
+	local ui = {}
+	local rowFrame = Instance.new("Frame")
+	rowFrame.Size = UDim2.new(1, -10, 0, 30)
+	rowFrame.Position = UDim2.new(0.5, -rowFrame.Size.X.Offset/2, 0, yPos)
+	rowFrame.BackgroundTransparency = 1
+	rowFrame.Parent = parent
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.Parent = rowFrame
+	ui.DrawButton = Instance.new("TextButton")
+	ui.DrawButton.Name = "Draw" .. name .. "Button"
+	ui.DrawButton.Size = UDim2.new(1, -34, 1, 0)
+	ui.DrawButton.Text = "+ " .. name
+	ui.DrawButton.Parent = rowFrame
+	styleButton(ui.DrawButton)
+	ui.AddAtPlayheadButton = Instance.new("TextButton")
+	ui.AddAtPlayheadButton.Name = "Add" .. name .. "AtPlayheadButton"
+	ui.AddAtPlayheadButton.Size = UDim2.new(0, 30, 1, 0)
+	ui.AddAtPlayheadButton.Text = "+>"
+	ui.AddAtPlayheadButton.Parent = rowFrame
+	styleButton(ui.AddAtPlayheadButton)
+	return ui
+end
+
 
 function UIManager.createUI(widget)
 	local ui = {}
+	local theme = Config.Theme
 
 	-- Main UI Structure
 	ui.MainFrame = Instance.new("Frame")
 	ui.MainFrame.Name = "MainFrame"
 	ui.MainFrame.Size = UDim2.new(1, 0, 1, 0)
-	ui.MainFrame.BackgroundColor3 = Color3.fromRGB(31, 31, 31)
+	ui.MainFrame.BackgroundColor3 = theme.Background
 	ui.MainFrame.Parent = widget
 
 	-- Top Bar for controls
 	ui.TopBar = Instance.new("Frame")
 	ui.TopBar.Name = "TopBar"
 	ui.TopBar.Size = UDim2.new(1, 0, 0, 40)
-	ui.TopBar.BackgroundColor3 = Color3.fromRGB(41, 41, 41)
+	ui.TopBar.BackgroundColor3 = theme.TopBar
 	ui.TopBar.Parent = ui.MainFrame
 
 	local topBarLayout = Instance.new("UIListLayout")
@@ -38,11 +94,35 @@ function UIManager.createUI(widget)
 	leftLayout.Padding = UDim.new(0, 5)
 	leftLayout.Parent = leftFrame
 
+	-- Undo/Redo Buttons
+	ui.UndoButton = Instance.new("TextButton")
+	ui.UndoButton.Name = "UndoButton"
+	ui.UndoButton.Size = UDim2.new(0, 70, 0, 30)
+	ui.UndoButton.Text = "Undo"
+	ui.UndoButton.Parent = leftFrame
+	styleButton(ui.UndoButton)
+	ui.UndoButton.AutoButtonColor = false
+	ui.UndoButton.BackgroundColor3 = theme.ButtonDisabled
+	ui.UndoButton.TextColor3 = theme.TextDisabled
+	ui.UndoButton.Active = false
+
+	ui.RedoButton = Instance.new("TextButton")
+	ui.RedoButton.Name = "RedoButton"
+	ui.RedoButton.Size = UDim2.new(0, 70, 0, 30)
+	ui.RedoButton.Text = "Redo"
+	ui.RedoButton.Parent = leftFrame
+	styleButton(ui.RedoButton)
+	ui.RedoButton.AutoButtonColor = false
+	ui.RedoButton.BackgroundColor3 = theme.ButtonDisabled
+	ui.RedoButton.TextColor3 = theme.TextDisabled
+	ui.RedoButton.Active = false
+
 	ui.CreateVFXButton = Instance.new("TextButton")
 	ui.CreateVFXButton.Name = "CreateNewVFXButton"
 	ui.CreateVFXButton.Size = UDim2.new(0, 150, 0, 30)
 	ui.CreateVFXButton.Text = "Create New VFX"
 	ui.CreateVFXButton.Parent = leftFrame
+	styleButton(ui.CreateVFXButton)
 
 	-- Center Aligned Buttons
 	local centerFrame = Instance.new("Frame")
@@ -61,12 +141,14 @@ function UIManager.createUI(widget)
 	ui.PlayButton.Size = UDim2.new(0, 80, 0, 30)
 	ui.PlayButton.Text = "Play"
 	ui.PlayButton.Parent = centerFrame
+	styleButton(ui.PlayButton)
 
 	ui.StopButton = Instance.new("TextButton")
 	ui.StopButton.Name = "StopButton"
 	ui.StopButton.Size = UDim2.new(0, 80, 0, 30)
 	ui.StopButton.Text = "Stop"
 	ui.StopButton.Parent = centerFrame
+	styleButton(ui.StopButton)
 
 	-- Right Aligned Buttons
 	local rightFrame = Instance.new("Frame")
@@ -85,185 +167,62 @@ function UIManager.createUI(widget)
 	ui.SaveButton.Size = UDim2.new(0, 80, 0, 30)
 	ui.SaveButton.Text = "Save"
 	ui.SaveButton.Parent = rightFrame
+	styleButton(ui.SaveButton)
 
 	ui.LoadButton = Instance.new("TextButton")
 	ui.LoadButton.Name = "LoadButton"
 	ui.LoadButton.Size = UDim2.new(0, 80, 0, 30)
 	ui.LoadButton.Text = "Load"
 	ui.LoadButton.Parent = rightFrame
+	styleButton(ui.LoadButton)
+	ui.LoadButton.AutoButtonColor = false
+	ui.LoadButton.BackgroundColor3 = theme.ButtonDisabled
+	ui.LoadButton.TextColor3 = theme.TextDisabled
+	ui.LoadButton.Active = false
 
 	ui.ExportButton = Instance.new("TextButton")
 	ui.ExportButton.Name = "ExportButton"
 	ui.ExportButton.Size = UDim2.new(0, 80, 0, 30)
 	ui.ExportButton.Text = "Export"
 	ui.ExportButton.Parent = rightFrame
+	styleButton(ui.ExportButton)
 
 	ui.ResetButton = Instance.new("TextButton")
 	ui.ResetButton.Name = "ResetButton"
 	ui.ResetButton.Size = UDim2.new(0, 80, 0, 30)
 	ui.ResetButton.Text = "Reset"
 	ui.ResetButton.Parent = rightFrame
+	styleButton(ui.ResetButton)
+	ui.ResetButton.BackgroundColor3 = theme.AccentDestructive
 
-	-- Content Area
+	-- Content Area & Panels... (rest of the file is unchanged)
 	local contentArea = Instance.new("Frame")
-	contentArea.Name = "ContentArea"
-	contentArea.Size = UDim2.new(1, 0, 1, -40)
-	contentArea.Position = UDim2.new(0, 0, 0, 40)
-	contentArea.Parent = ui.MainFrame
-
-	-- Main Panels
-
+	contentArea.Name = "ContentArea"; contentArea.Size = UDim2.new(1, 0, 1, -40); contentArea.Position = UDim2.new(0, 0, 0, 40); contentArea.Parent = ui.MainFrame
 	ui.ComponentLibrary = Instance.new("Frame")
-	ui.ComponentLibrary.Name = "ComponentLibrary"
-	ui.ComponentLibrary.Size = UDim2.new(0.15, 0, 1, 0)
-	ui.ComponentLibrary.Position = UDim2.new(0, 0, 0, 0)
-	ui.ComponentLibrary.Parent = contentArea
-
-	ui.PropertiesPanel = Instance.new("Frame")
-	ui.PropertiesPanel.Name = "PropertiesPanel"
-	ui.PropertiesPanel.Size = UDim2.new(0.15, 0, 1, 0)
-	ui.PropertiesPanel.Position = UDim2.new(0.85, 0, 0, 0)
-	ui.PropertiesPanel.Parent = contentArea
-
+	ui.ComponentLibrary.Name = "ComponentLibrary"; ui.ComponentLibrary.Size = UDim2.new(0.15, 0, 1, 0); ui.ComponentLibrary.Position = UDim2.new(0, 0, 0, 0); ui.ComponentLibrary.BackgroundColor3 = theme.ComponentLibrary; ui.ComponentLibrary.Parent = contentArea
+	ui.PropertiesPanel = Instance.new("ScrollingFrame")
+	ui.PropertiesPanel.Name = "PropertiesPanel"; ui.PropertiesPanel.Size = UDim2.new(0.15, 0, 1, 0); ui.PropertiesPanel.Position = UDim2.new(0.85, 0, 0, 0); ui.PropertiesPanel.BackgroundColor3 = theme.Properties; ui.PropertiesPanel.BorderSizePixel = 0; ui.PropertiesPanel.ScrollBarThickness = 6; ui.PropertiesPanel.ScrollBarImageColor3 = theme.ButtonAccent; ui.PropertiesPanel.Parent = contentArea
+	local padding = Instance.new("UIPadding"); padding.PaddingTop = UDim.new(0, 5); padding.PaddingLeft = UDim.new(0, 5); padding.Parent = ui.PropertiesPanel
 	ui.Timeline = Instance.new("ScrollingFrame")
-	ui.Timeline.Name = "Timeline"
-	ui.Timeline.Size = UDim2.new(0.7, 0, 1, 0)
-	ui.Timeline.Position = UDim2.new(0.15, 0, 0, 0)
-	ui.Timeline.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-	ui.Timeline.CanvasSize = UDim2.new(5, 0, 1, 0)
-	ui.Timeline.ScrollBarThickness = 6
-	ui.Timeline.Parent = contentArea
-
-	-- Component Library Buttons
-	ui.AddLightButton = Instance.new("TextButton")
-	ui.AddLightButton.Name = "AddLightButton"
-	ui.AddLightButton.Size = UDim2.new(1, -10, 0, 30)
-	ui.AddLightButton.Position = UDim2.new(0.5, -ui.AddLightButton.Size.X.Offset/2, 0, 10)
-	ui.AddLightButton.Text = "+ Light"
-	ui.AddLightButton.Parent = ui.ComponentLibrary
-
-	ui.AddSoundButton = Instance.new("TextButton")
-	ui.AddSoundButton.Name = "AddSoundButton"
-	ui.AddSoundButton.Size = UDim2.new(1, -10, 0, 30)
-	ui.AddSoundButton.Position = UDim2.new(0.5, -ui.AddSoundButton.Size.X.Offset/2, 0, 50)
-	ui.AddSoundButton.Text = "+ Sound"
-	ui.AddSoundButton.Parent = ui.ComponentLibrary
-
-	ui.AddParticleButton = Instance.new("TextButton")
-	ui.AddParticleButton.Name = "AddParticleButton"
-	ui.AddParticleButton.Size = UDim2.new(1, -10, 0, 30)
-	ui.AddParticleButton.Position = UDim2.new(0.5, -ui.AddParticleButton.Size.X.Offset/2, 0, 90)
-	ui.AddParticleButton.Text = "+ Particle"
-	ui.AddParticleButton.Parent = ui.ComponentLibrary
-
-	ui.AddSpotLightButton = Instance.new("TextButton")
-	ui.AddSpotLightButton.Name = "AddSpotLightButton"
-	ui.AddSpotLightButton.Size = UDim2.new(1, -10, 0, 30)
-	ui.AddSpotLightButton.Position = UDim2.new(0.5, -ui.AddSpotLightButton.Size.X.Offset/2, 0, 130)
-	ui.AddSpotLightButton.Text = "+ SpotLight"
-	ui.AddSpotLightButton.Parent = ui.ComponentLibrary
-
-	ui.AddSurfaceLightButton = Instance.new("TextButton")
-	ui.AddSurfaceLightButton.Name = "AddSurfaceLightButton"
-	ui.AddSurfaceLightButton.Size = UDim2.new(1, -10, 0, 30)
-	ui.AddSurfaceLightButton.Position = UDim2.new(0.5, -ui.AddSurfaceLightButton.Size.X.Offset/2, 0, 170)
-	ui.AddSurfaceLightButton.Text = "+ SurfaceLight"
-	ui.AddSurfaceLightButton.Parent = ui.ComponentLibrary
-
-	ui.AddBeamButton = Instance.new("TextButton")
-	ui.AddBeamButton.Name = "AddBeamButton"
-	ui.AddBeamButton.Size = UDim2.new(1, -10, 0, 30)
-	ui.AddBeamButton.Position = UDim2.new(0.5, -ui.AddBeamButton.Size.X.Offset/2, 0, 210)
-	ui.AddBeamButton.Text = "+ Beam"
-	ui.AddBeamButton.Parent = ui.ComponentLibrary
-
-	ui.AddTrailButton = Instance.new("TextButton")
-	ui.AddTrailButton.Name = "AddTrailButton"
-	ui.AddTrailButton.Size = UDim2.new(1, -10, 0, 30)
-	ui.AddTrailButton.Position = UDim2.new(0.5, -ui.AddTrailButton.Size.X.Offset/2, 0, 250)
-	ui.AddTrailButton.Text = "+ Trail"
-	ui.AddTrailButton.Parent = ui.ComponentLibrary
-
-	-- Confirmation Dialog
+	ui.Timeline.Name = "Timeline"; ui.Timeline.Size = UDim2.new(0.7, 0, 1, 0); ui.Timeline.Position = UDim2.new(0.15, 0, 0, 0); ui.Timeline.BackgroundColor3 = theme.Timeline; ui.Timeline.CanvasSize = UDim2.new(5, 0, 1, 0); ui.Timeline.ScrollBarThickness = 6; ui.Timeline.Parent = contentArea
+	ui.LightButtons = createComponentButton(ui.ComponentLibrary, "Light", 10)
+	ui.SoundButtons = createComponentButton(ui.ComponentLibrary, "Sound", 50)
+	ui.ParticleButtons = createComponentButton(ui.ComponentLibrary, "Particle", 90)
+	ui.SpotLightButtons = createComponentButton(ui.ComponentLibrary, "SpotLight", 130)
+	ui.SurfaceLightButtons = createComponentButton(ui.ComponentLibrary, "SurfaceLight", 170)
+	ui.BeamButtons = createComponentButton(ui.ComponentLibrary, "Beam", 210)
+	ui.TrailButtons = createComponentButton(ui.ComponentLibrary, "Trail", 250)
 	ui.ConfirmationDialog = Instance.new("Frame")
-	ui.ConfirmationDialog.Name = "ConfirmationDialog"
-	ui.ConfirmationDialog.Size = UDim2.new(1, 0, 1, 0)
-	ui.ConfirmationDialog.Position = UDim2.new(0, 0, 0, 0)
-	ui.ConfirmationDialog.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	ui.ConfirmationDialog.BackgroundTransparency = 0.5
-	ui.ConfirmationDialog.Visible = false
-	ui.ConfirmationDialog.ZIndex = 10
-	ui.ConfirmationDialog.Parent = ui.MainFrame
-
-	local dialog = Instance.new("Frame")
-	dialog.Name = "Dialog"
-	dialog.Size = UDim2.new(0, 400, 0, 150)
-	dialog.Position = UDim2.new(0.5, -200, 0.5, -75)
-	dialog.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-	dialog.Parent = ui.ConfirmationDialog
-
-	local title = Instance.new("TextLabel")
-	title.Name = "Title"
-	title.Size = UDim2.new(1, 0, 0, 40)
-	title.Text = "Confirm Reset"
-	title.TextColor3 = Color3.fromRGB(255, 255, 255)
-	title.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-	title.Parent = dialog
-
-	local message = Instance.new("TextLabel")
-	message.Name = "Message"
-	message.Size = UDim2.new(1, -20, 0, 60)
-	message.Position = UDim2.new(0, 10, 0, 40)
-	message.Text = "Are you sure you want to reset the timeline? All unsaved work will be lost."
-	message.TextColor3 = Color3.fromRGB(220, 220, 220)
-	message.TextWrapped = true
-	message.BackgroundTransparency = 1
-	message.Parent = dialog
-
-	ui.ConfirmButton = Instance.new("TextButton")
-	ui.ConfirmButton.Name = "ConfirmButton"
-	ui.ConfirmButton.Size = UDim2.new(0, 100, 0, 30)
-	ui.ConfirmButton.Position = UDim2.new(0.5, -110, 1, -40)
-	ui.ConfirmButton.Text = "Confirm"
-	ui.ConfirmButton.Parent = dialog
-
-	ui.CancelButton = Instance.new("TextButton")
-	ui.CancelButton.Name = "CancelButton"
-	ui.CancelButton.Size = UDim2.new(0, 100, 0, 30)
-	ui.CancelButton.Position = UDim2.new(0.5, 10, 1, -40)
-	ui.CancelButton.Text = "Cancel"
-	ui.CancelButton.Parent = dialog
-
-	-- Context Menu
-	ui.ContextMenu = Instance.new("Frame")
-	ui.ContextMenu.Name = "ContextMenu"
-	ui.ContextMenu.Size = UDim2.new(0, 120, 0, 60)
-	ui.ContextMenu.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-	ui.ContextMenu.BorderSizePixel = 1
-	ui.ContextMenu.BorderColor3 = Color3.fromRGB(100,100,100)
-	ui.ContextMenu.Visible = false
-	ui.ContextMenu.ZIndex = 20
-	ui.ContextMenu.Parent = ui.MainFrame
-
-	local contextLayout = Instance.new("UIListLayout")
-	contextLayout.Padding = UDim.new(0, 2)
-	contextLayout.Parent = ui.ContextMenu
-
-	ui.CopyButton = Instance.new("TextButton")
-	ui.CopyButton.Name = "CopyButton"
-	ui.CopyButton.Size = UDim2.new(1, -4, 0, 28)
-	ui.CopyButton.Text = "Copy"
-	ui.CopyButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-	ui.CopyButton.TextColor3 = Color3.fromRGB(220, 220, 220)
-	ui.CopyButton.Parent = ui.ContextMenu
-
-	ui.PasteButton = Instance.new("TextButton")
-	ui.PasteButton.Name = "PasteButton"
-	ui.PasteButton.Size = UDim2.new(1, -4, 0, 28)
-	ui.PasteButton.Text = "Paste"
-	ui.PasteButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-	ui.PasteButton.TextColor3 = Color3.fromRGB(220, 220, 220)
-	ui.PasteButton.Parent = ui.ContextMenu
+	ui.ConfirmationDialog.Name = "ConfirmationDialog"; ui.ConfirmationDialog.Size = UDim2.new(1, 0, 1, 0); ui.ConfirmationDialog.Position = UDim2.new(0, 0, 0, 0); ui.ConfirmationDialog.BackgroundColor3 = Color3.fromRGB(0, 0, 0); ui.ConfirmationDialog.BackgroundTransparency = 0.5; ui.ConfirmationDialog.Visible = false; ui.ConfirmationDialog.ZIndex = 10; ui.ConfirmationDialog.Parent = ui.MainFrame
+	local dialog = Instance.new("Frame"); dialog.Name = "Dialog"; dialog.Size = UDim2.new(0, 400, 0, 150); dialog.Position = UDim2.new(0.5, -200, 0.5, -75); dialog.BackgroundColor3 = Color3.fromRGB(50, 50, 50); dialog.Parent = ui.ConfirmationDialog
+	ui.DialogTitle = Instance.new("TextLabel"); ui.DialogTitle.Name = "Title"; ui.DialogTitle.Size = UDim2.new(1, 0, 0, 40); ui.DialogTitle.Text = "Confirm Action"; ui.DialogTitle.TextColor3 = Color3.fromRGB(255, 255, 255); ui.DialogTitle.BackgroundColor3 = Color3.fromRGB(60, 60, 60); ui.DialogTitle.Parent = dialog
+	ui.DialogMessage = Instance.new("TextLabel"); ui.DialogMessage.Name = "Message"; ui.DialogMessage.Size = UDim2.new(1, -20, 0, 60); ui.DialogMessage.Position = UDim2.new(0, 10, 0, 40); ui.DialogMessage.Text = "Are you sure?"; ui.DialogMessage.TextColor3 = Color3.fromRGB(220, 220, 220); ui.DialogMessage.TextWrapped = true; ui.DialogMessage.BackgroundTransparency = 1; ui.DialogMessage.Parent = dialog
+	ui.ConfirmButton = Instance.new("TextButton"); ui.ConfirmButton.Name = "ConfirmButton"; ui.ConfirmButton.Size = UDim2.new(0, 100, 0, 30); ui.ConfirmButton.Position = UDim2.new(0.5, -110, 1, -40); ui.ConfirmButton.Text = "Confirm"; ui.ConfirmButton.Parent = dialog; styleButton(ui.ConfirmButton)
+	ui.CancelButton = Instance.new("TextButton"); ui.CancelButton.Name = "CancelButton"; ui.CancelButton.Size = UDim2.new(0, 100, 0, 30); ui.CancelButton.Position = UDim2.new(0.5, 10, 1, -40); ui.CancelButton.Text = "Cancel"; ui.CancelButton.Parent = dialog; styleButton(ui.CancelButton)
+	ui.ContextMenu = Instance.new("Frame"); ui.ContextMenu.Name = "ContextMenu"; ui.ContextMenu.Size = UDim2.new(0, 120, 0, 60); ui.ContextMenu.BackgroundColor3 = Color3.fromRGB(45, 45, 45); ui.ContextMenu.BorderSizePixel = 1; ui.ContextMenu.BorderColor3 = Color3.fromRGB(100,100,100); ui.ContextMenu.Visible = false; ui.ContextMenu.ZIndex = 20; ui.ContextMenu.Parent = ui.MainFrame
+	local contextLayout = Instance.new("UIListLayout"); contextLayout.Padding = UDim.new(0, 2); contextLayout.Parent = ui.ContextMenu
+	ui.CopyButton = Instance.new("TextButton"); ui.CopyButton.Name = "CopyButton"; ui.CopyButton.Size = UDim2.new(1, -4, 0, 28); ui.CopyButton.Text = "Copy"; ui.CopyButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80); ui.CopyButton.TextColor3 = Color3.fromRGB(220, 220, 220); ui.CopyButton.Parent = ui.ContextMenu; styleButton(ui.CopyButton)
+	ui.PasteButton = Instance.new("TextButton"); ui.PasteButton.Name = "PasteButton"; ui.PasteButton.Size = UDim2.new(1, -4, 0, 28); ui.PasteButton.Text = "Paste"; ui.PasteButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80); ui.PasteButton.TextColor3 = Color3.fromRGB(220, 220, 220); ui.PasteButton.Parent = ui.ContextMenu; styleButton(ui.PasteButton)
 
 	return ui
 end
