@@ -15,6 +15,10 @@ function TimelineManager.new(ui, playhead, historyManager)
 	self.playhead = playhead
 	self.historyManager = historyManager
 
+	self.DOUBLE_CLICK_SPEED = 0.25 -- seconds
+	self.lastClickTime = 0
+	self.lastClickedTrack = nil
+
 	self.PIXELS_PER_SECOND = Config.PIXELS_PER_SECOND
 	self.SNAP_INTERVAL = Config.SNAP_INTERVAL
 	self.TOTAL_TIME = Config.TOTAL_TIME
@@ -60,7 +64,7 @@ function TimelineManager:_createTrackUI(trackData)
 
 	local newTrack = Instance.new("TextButton")
 	newTrack.Name = "TimelineTrack"
-	newTrack.Text = trackData.ComponentType or ""
+	newTrack.Text = trackData.TrackLabel or trackData.ComponentType or "" -- Use label if it exists
 	newTrack.Size = UDim2.new(0, duration * zoomedPixelsPerSecond, 0, self.TRACK_HEIGHT)
 	newTrack.Position = UDim2.new(0, startTime * zoomedPixelsPerSecond, 0, yPos)
 	newTrack.Active = true
@@ -74,6 +78,15 @@ function TimelineManager:_createTrackUI(trackData)
 		newTrack:SetAttribute(key, value)
 	end
 	newTrack:SetAttribute("Lane", nextLane)
+
+	-- Add a frame for the group color indicator
+	local groupColorIndicator = Instance.new("Frame")
+	groupColorIndicator.Name = "GroupColorIndicator"
+	groupColorIndicator.Size = UDim2.new(0, 5, 1, 0) -- 5 pixels wide, full height
+	groupColorIndicator.Position = UDim2.new(0, 0, 0, 0)
+	groupColorIndicator.BackgroundColor3 = trackData.GroupColor or Color3.fromRGB(50, 50, 50) -- Default color
+	groupColorIndicator.BorderSizePixel = 0
+	groupColorIndicator.Parent = newTrack
 
 	newTrack.Parent = self.timeline
 	self:makeTrackInteractive(newTrack)
@@ -128,6 +141,23 @@ function TimelineManager:deleteSelectedTracks()
 	self.historyManager:registerAction(action)
 end
 
+-- PUBLIC, HISTORY-LOGGED ACTION: Set track label
+function TimelineManager:setTrackLabel(track, newLabel)
+	local oldLabel = track:GetAttribute("TrackLabel") or nil
+	local oldText = track.Text
+
+	local action = {
+		execute = function()
+			track:SetAttribute("TrackLabel", newLabel)
+			track.Text = newLabel
+		end,
+		undo = function()
+			track:SetAttribute("TrackLabel", oldLabel)
+			track.Text = oldText
+		end
+	}
+	self.historyManager:registerAction(action)
+end
 
 -- NON-HISTORY ACTIONS
 function TimelineManager:deselectAllTracks()
@@ -193,6 +223,37 @@ function TimelineManager:pasteTracksAtTime(time)
 	end
 
 	self:createTracks(tracksToCreate)
+end
+
+function TimelineManager:setGroupColorForSelectedTracks(color)
+	if next(self.selectedTracks) == nil then return end
+
+	local originalColors = {}
+	for track in pairs(self.selectedTracks) do
+		originalColors[track] = track:GetAttribute("GroupColor") or nil
+	end
+
+	local action = {
+		execute = function()
+			for track in pairs(self.selectedTracks) do
+				track:SetAttribute("GroupColor", color)
+				local indicator = track:FindFirstChild("GroupColorIndicator")
+				if indicator then
+					indicator.BackgroundColor3 = color
+				end
+			end
+		end,
+		undo = function()
+			for track, originalColor in pairs(originalColors) do
+				track:SetAttribute("GroupColor", originalColor)
+				local indicator = track:FindFirstChild("GroupColorIndicator")
+				if indicator then
+					indicator.BackgroundColor3 = originalColor or Color3.fromRGB(50, 50, 50)
+				end
+			end
+		end
+	}
+	self.historyManager:registerAction(action)
 end
 
 function TimelineManager:showContextMenu(mouseX, mouseY, options)
@@ -290,6 +351,35 @@ function TimelineManager:makeTrackInteractive(track)
 
 	track.MouseButton1Down:Connect(function()
 		self.ui.ContextMenu.Visible = false
+		local currentTime = tick()
+
+		if (currentTime - self.lastClickTime) < self.DOUBLE_CLICK_SPEED and self.lastClickedTrack == track then
+			-- Double click detected
+			self.lastClickTime = 0 -- Reset to prevent triple-click
+
+			local editBox = Instance.new("TextBox")
+			editBox.Size = UDim2.new(1, 0, 1, 0)
+			editBox.Position = UDim2.new(0, 0, 0, 0)
+			editBox.BackgroundColor3 = Config.Theme.Background
+			editBox.TextColor3 = Config.Theme.Text
+			editBox.Font = Config.Theme.Font
+			editBox.Text = track:GetAttribute("TrackLabel") or track:GetAttribute("ComponentType") or ""
+			editBox.TextXAlignment = Enum.TextXAlignment.Left
+			editBox.Parent = track
+			editBox:CaptureFocus()
+
+			editBox.FocusLost:Connect(function(enterPressed)
+				if enterPressed then
+					self:setTrackLabel(track, editBox.Text)
+				end
+				editBox:Destroy()
+			end)
+			return -- End early to not trigger selection
+		end
+
+		self.lastClickTime = currentTime
+		self.lastClickedTrack = track
+
 		local isCtrlDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
 		if isCtrlDown then
 			if self.selectedTracks[track] then self:removeTrackFromSelection(track) else self:addTrackToSelection(track) end
