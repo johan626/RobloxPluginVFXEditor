@@ -19,6 +19,18 @@ local Config = {
 		Trail = Color3.fromRGB(255, 150, 255)
 	},
 
+	GroupColors = {
+		Red = Color3.fromRGB(217, 48, 37),
+		Orange = Color3.fromRGB(235, 137, 49),
+		Yellow = Color3.fromRGB(245, 225, 51),
+		Green = Color3.fromRGB(63, 199, 84),
+		Blue = Color3.fromRGB(48, 128, 242),
+		Purple = Color3.fromRGB(142, 69, 219),
+		Pink = Color3.fromRGB(217, 56, 141),
+		Gray = Color3.fromRGB(128, 128, 128),
+		None = Color3.fromRGB(50, 50, 50) -- Represents "no color"
+	},
+
 	Theme = {
 		Background = Color3.fromRGB(31, 31, 31),
 		TopBar = Color3.fromRGB(41, 41, 41),
