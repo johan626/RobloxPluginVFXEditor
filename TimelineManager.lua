@@ -31,6 +31,11 @@ function TimelineManager.new(ui, playhead, historyManager)
 	self.pasteTime = 0
 	self.zoom = 1
 
+	-- State for middle-mouse panning
+	self.isPanning = false
+	self.panStartPosition = Vector2.new(0, 0)
+	self.panStartCanvasPosition = Vector2.new(0, 0)
+
 	self.TrackSelected = {}
 	function self.TrackSelected:Connect(callback) table.insert(self, callback) end
 	function self.TrackSelected:Fire(...) for _, cb in ipairs(self) do cb(...) end end
@@ -453,6 +458,13 @@ function TimelineManager:connectEvents()
 			self:deselectAllTracks()
 			self.TrackSelected:Fire({})
 		end
+
+		if input.UserInputType == Enum.UserInputType.MouseButton3 then -- Middle mouse for panning
+			self.isPanning = true
+			self.panStartPosition = Vector2.new(input.Position.X, input.Position.Y)
+			self.panStartCanvasPosition = self.timeline.CanvasPosition
+		end
+
 		self.ui.ContextMenu.Visible = false
 		if input.Position then -- Guard against non-mouse inputs
 			if self.drawingMode and input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -460,7 +472,7 @@ function TimelineManager:connectEvents()
 				local mouseX = input.Position.X - self.timeline.AbsolutePosition.X
 				self.startMouseX = mouseX + self.timeline.CanvasPosition.X
 				self.ghostTrack = Instance.new("Frame"); self.ghostTrack.Size = UDim2.new(0, 0, 0, self.TRACK_HEIGHT); self.ghostTrack.Position = UDim2.new(0, self.startMouseX, 0, 50); self.ghostTrack.BackgroundColor3 = Color3.fromRGB(100, 150, 255); self.ghostTrack.BackgroundTransparency = 0.5; self.ghostTrack.Parent = self.timeline
-			elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+			elseif input.UserInputType == Enum.UserInputType.MouseButton2 then -- Right-click for context menu
 				local mouseX, mouseY = input.Position.X, input.Position.Y
 				self:showContextMenu(mouseX, mouseY, {showCreate = true, showPaste = self.copiedTracksData ~= nil})
 				local relativeMouseX = input.Position.X - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
@@ -470,6 +482,12 @@ function TimelineManager:connectEvents()
 	end)
 
 	self.timeline.InputChanged:Connect(function(input)
+		if self.isPanning and input.UserInputType == Enum.UserInputType.MouseMovement then
+			if not input.Position then return end
+			local delta = input.Position.X - self.panStartPosition.X
+			self.timeline.CanvasPosition = Vector2.new(self.panStartCanvasPosition.X - delta, self.panStartCanvasPosition.Y)
+		end
+
 		if self.isDrawing and input.UserInputType == Enum.UserInputType.MouseMovement and input.Position then
 			local currentMouseX = input.Position.X - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
 			local width = currentMouseX - self.startMouseX
@@ -484,6 +502,10 @@ function TimelineManager:connectEvents()
 	end)
 
 	self.timeline.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton3 then
+			self.isPanning = false
+		end
+
 		if self.isDrawing and input.UserInputType == Enum.UserInputType.MouseButton1 then
 			self.isDrawing = false
 			if self.ghostTrack then
