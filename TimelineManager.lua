@@ -192,9 +192,24 @@ end
 
 function TimelineManager:showContextMenu(mouseX, mouseY, options)
 	local menu = self.ui.ContextMenu
-	menu.Position = UDim2.new(0, mouseX, 0, mouseY)
+	-- Adjust position to prevent the menu from going off-screen
+	local viewportSize = self.ui.MainFrame.AbsoluteSize
+	local menuSize = menu.AbsoluteSize
+	local x = math.min(mouseX, viewportSize.X - menuSize.X - 150) -- Account for submenu
+	local y = math.min(mouseY, viewportSize.Y - menuSize.Y)
+	menu.Position = UDim2.new(0, x, 0, y)
+
+	menu.CreateTrackButton.Visible = options.showCreate or false
 	menu.CopyButton.Visible = options.showCopy or false
 	menu.PasteButton.Visible = options.showPaste or false
+
+	-- Auto-adjust height based on visible buttons
+	local visibleButtons = 0
+	if menu.CreateTrackButton.Visible then visibleButtons = visibleButtons + 1 end
+	if menu.CopyButton.Visible then visibleButtons = visibleButtons + 1 end
+	if menu.PasteButton.Visible then visibleButtons = visibleButtons + 1 end
+	menu.Size = UDim2.new(0, 150, 0, visibleButtons * 30 + 4)
+
 	menu.Visible = true
 end
 
@@ -281,12 +296,14 @@ function TimelineManager:makeTrackInteractive(track)
 
 	track.MouseButton2Down:Connect(function(x, y)
 		if not self.selectedTracks[track] then self:deselectAllTracks(); self:addTrackToSelection(track); self.TrackSelected:Fire(self.selectedTracks) end
-		self:showContextMenu(x, y, {showCopy = true})
+		local relativeMouseX = x - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
+		self.pasteTime = relativeMouseX / (self.PIXELS_PER_SECOND * self.zoom)
+		self:showContextMenu(x, y, {showCopy = true, showPaste = self.copiedTracksData ~= nil, showCreate = true})
 	end)
 
 	local dragging, dragStart, originalStates = false, 0, {}
 	track.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		if input.UserInputType == Enum.UserInputType.MouseButton1 and input.Position then
 			dragging = true
 			dragStart = input.Position.X
 			originalStates = {}
@@ -297,7 +314,7 @@ function TimelineManager:makeTrackInteractive(track)
 	end)
 
 	track.InputChanged:Connect(function(input)
-		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement and input.Position then
 			local delta = input.Position.X - dragStart
 			for t, state in pairs(originalStates) do
 				t.Position = UDim2.new(0, state.Position.X.Offset + delta, 0, t.Position.Y.Offset)
@@ -346,13 +363,13 @@ function TimelineManager:makeTrackInteractive(track)
 		local resizing, resizeStart, originalSize, originalPos = false, 0, 0, 0
 
 		handle.InputBegan:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			if input.UserInputType == Enum.UserInputType.MouseButton1 and input.Position then
 				resizing = true; resizeStart = input.Position.X; originalSize = track.Size.X.Offset; originalPos = track.Position.X.Offset
 			end
 		end)
 
 		handle.InputChanged:Connect(function(input)
-			if resizing and input.UserInputType == Enum.UserInputType.MouseMovement then
+			if resizing and input.UserInputType == Enum.UserInputType.MouseMovement and input.Position then
 				local delta = input.Position.X - resizeStart
 				local edgePos
 				if side == "Left" then
@@ -445,7 +462,7 @@ function TimelineManager:connectEvents()
 				self.ghostTrack = Instance.new("Frame"); self.ghostTrack.Size = UDim2.new(0, 0, 0, self.TRACK_HEIGHT); self.ghostTrack.Position = UDim2.new(0, self.startMouseX, 0, 50); self.ghostTrack.BackgroundColor3 = Color3.fromRGB(100, 150, 255); self.ghostTrack.BackgroundTransparency = 0.5; self.ghostTrack.Parent = self.timeline
 			elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
 				local mouseX, mouseY = input.Position.X, input.Position.Y
-				self:showContextMenu(mouseX, mouseY, {showPaste = self.copiedTracksData ~= nil})
+				self:showContextMenu(mouseX, mouseY, {showCreate = true, showPaste = self.copiedTracksData ~= nil})
 				local relativeMouseX = input.Position.X - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
 				self.pasteTime = relativeMouseX / (self.PIXELS_PER_SECOND * self.zoom)
 			end
@@ -453,7 +470,7 @@ function TimelineManager:connectEvents()
 	end)
 
 	self.timeline.InputChanged:Connect(function(input)
-		if self.isDrawing and input.UserInputType == Enum.UserInputType.MouseMovement then
+		if self.isDrawing and input.UserInputType == Enum.UserInputType.MouseMovement and input.Position then
 			local currentMouseX = input.Position.X - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
 			local width = currentMouseX - self.startMouseX
 			if width < 0 then
@@ -496,13 +513,15 @@ function TimelineManager:connectEvents()
 		if input.UserInputType == Enum.UserInputType.MouseWheel then
 			local isCtrlDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
 			if isCtrlDown then
-				local mousePos = UserInputService:GetMouseLocation()
-				local relativeMouseX = mousePos.X - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
-				local timeAtMouse = relativeMouseX / (self.PIXELS_PER_SECOND * self.zoom)
-				self.zoom = math.clamp(self.zoom - input.Position.Z * 0.2, 0.2, 10)
-				self:redrawTimeline()
-				local newMouseX = timeAtMouse * (self.PIXELS_PER_SECOND * self.zoom)
-				self.timeline.CanvasPosition = Vector2.new(newMouseX - (mousePos.X - self.timeline.AbsolutePosition.X), self.timeline.CanvasPosition.Y)
+				if UserInputService:GetMouseLocation() then
+					local mousePos = UserInputService:GetMouseLocation()
+					local relativeMouseX = mousePos.X - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
+					local timeAtMouse = relativeMouseX / (self.PIXELS_PER_SECOND * self.zoom)
+					self.zoom = math.clamp(self.zoom - input.Position.Z * 0.2, 0.2, 10)
+					self:redrawTimeline()
+					local newMouseX = timeAtMouse * (self.PIXELS_PER_SECOND * self.zoom)
+					self.timeline.CanvasPosition = Vector2.new(newMouseX - (mousePos.X - self.timeline.AbsolutePosition.X), self.timeline.CanvasPosition.Y)
+				end
 			end
 		end
 	end)
