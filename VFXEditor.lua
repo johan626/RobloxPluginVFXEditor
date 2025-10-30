@@ -1,20 +1,26 @@
 -- VFXEditor.lua (Main Plugin Script) (Script)
 -- Path: ServerScriptService/VFXEditor.lua
 
+if not plugin then
+	warn("This script is intended to be run as a Roblox Studio plugin.")
+	return
+end
+
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Selection = game:GetService("Selection")
 local UserInputService = game:GetService("UserInputService")
+local ServerScriptService = game:GetService("ServerScriptService")
 
 -- Load Modules
-local UIManager = require(script.VFXEditorPlugin.UIManager)
-local TimelineManager = require(script.VFXEditorPlugin.TimelineManager)
-local PropertiesManager = require(script.VFXEditorPlugin.PropertiesManager)
-local PreviewManager = require(script.VFXEditorPlugin.PreviewManager)
-local Exporter = require(script.VFXEditorPlugin.Exporter)
-local DataManager = require(script.VFXEditorPlugin.DataManager)
-local HistoryManager = require(script.VFXEditorPlugin.HistoryManager)
-local Config = require(script.VFXEditorPlugin.Config)
+local UIManager = require(ServerScriptService.VFXEditorPlugin.UIManager)
+local TimelineManager = require(ServerScriptService.VFXEditorPlugin.TimelineManager)
+local PropertiesManager = require(ServerScriptService.VFXEditorPlugin.PropertiesManager)
+local PreviewManager = require(ServerScriptService.VFXEditorPlugin.PreviewManager)
+local Exporter = require(ServerScriptService.VFXEditorPlugin.Exporter)
+local DataManager = require(ServerScriptService.VFXEditorPlugin.DataManager)
+local HistoryManager = require(ServerScriptService.VFXEditorPlugin.HistoryManager)
+local Config = require(ServerScriptService.VFXEditorPlugin.Config)
 
 -- Plugin Initialization
 local toolbar = plugin:CreateToolbar("VFX Editor")
@@ -70,6 +76,16 @@ end)
 
 timelineManager.TrackDeleted:Connect(function()
 	PropertiesManager.clear(ui.PropertiesPanel)
+end)
+
+ui.CreateTrackRequested:Connect(function(componentType)
+	local trackData = {
+		ComponentType = componentType,
+		StartTime = timelineManager.pasteTime,
+		Duration = 1
+	}
+	timelineManager:addDefaultAttributes(trackData)
+	timelineManager:createTracks({trackData})
 end)
 
 -- Top Bar Button Connections
