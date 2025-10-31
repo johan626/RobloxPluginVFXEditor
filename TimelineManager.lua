@@ -3,6 +3,12 @@
 
 local Config = require(script.Parent.Config)
 local UserInputService = game:GetService("UserInputService")
+local UIManager = require(script.Parent.UIManager)
+local TrackInteractor = require(script.Parent.TrackInteractor)
+
+local LOCK_ICON_UNLOCKED = "rbxasset://textures/StudioShared/unlocked-light.png"
+local LOCK_ICON_LOCKED = "rbxasset://textures/StudioShared/locked-light.png"
+
 
 local ParticlePresets = {
 	Fire = {
@@ -55,17 +61,13 @@ function TimelineManager.new(ui, playhead, historyManager)
 	self.timeline = ui.Timeline
 	self.playhead = playhead
 	self.historyManager = historyManager
-
-	self.DOUBLE_CLICK_SPEED = 0.25 -- seconds
-	self.lastClickTime = 0
-	self.lastClickedTrack = nil
+	self.trackInteractor = TrackInteractor.new(self, ui, playhead, historyManager)
 
 	self.PIXELS_PER_SECOND = Config.PIXELS_PER_SECOND
 	self.SNAP_INTERVAL = Config.SNAP_INTERVAL
 	self.TOTAL_TIME = Config.TOTAL_TIME
 	self.TRACK_HEIGHT = Config.TRACK_HEIGHT
 	self.LANE_PADDING = Config.LANE_PADDING
-	self.PLAYHEAD_SNAP_DISTANCE = Config.PLAYHEAD_SNAP_DISTANCE
 
 	self.drawingMode = nil
 	self.isDrawing = false
@@ -89,48 +91,143 @@ function TimelineManager.new(ui, playhead, historyManager)
 	function self.TrackDeleted:Connect(callback) table.insert(self, callback) end
 	function self.TrackDeleted:Fire(...) for _, cb in ipairs(self) do cb(...) end end
 
+	self.MuteSoloChanged = {}
+	function self.MuteSoloChanged:Connect(callback) table.insert(self, callback) end
+	function self.MuteSoloChanged:Fire(...) for _, cb in ipairs(self) do cb(...) end end
+
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, self.LANE_PADDING)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = self.timeline
+
 	self:drawTimelineGrid()
 	self:connectEvents()
 
 	return self
 end
 
+function TimelineManager:_updateLockVisuals(track, isLocked)
+	local lockButton = track:FindFirstChild("LockButton")
+	if lockButton then
+		lockButton.Image = isLocked and LOCK_ICON_LOCKED or LOCK_ICON_UNLOCKED
+	end
+	-- Apply a visual effect to the track itself
+	track.BackgroundTransparency = isLocked and 0.5 or 0
+end
+
+function TimelineManager:_updateMuteSoloVisuals(track)
+	local isMuted = track:GetAttribute("IsMuted")
+	local isSoloed = track:GetAttribute("IsSoloed")
+
+	local muteButton = track:FindFirstChild("MuteButton")
+	if muteButton then
+		muteButton.BackgroundColor3 = isMuted and Color3.fromRGB(255, 180, 0) or Color3.fromRGB(80, 80, 80)
+	end
+
+	local soloButton = track:FindFirstChild("SoloButton")
+	if soloButton then
+		soloButton.BackgroundColor3 = isSoloed and Color3.fromRGB(0, 150, 255) or Color3.fromRGB(80, 80, 80)
+	end
+end
+
+
 -- INTERNAL, NON-HISTORY ACTION: Create track UI directly
 function TimelineManager:_createTrackUI(trackData)
 	local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
 	local startTime = trackData.StartTime or 0
 	local duration = trackData.Duration or 1
-	local nextLane = self:findNextAvailableLane(startTime, startTime + duration)
-	local yPos = (nextLane - 1) * (self.TRACK_HEIGHT + self.LANE_PADDING) + self.LANE_PADDING
 
 	local newTrack = Instance.new("TextButton")
 	newTrack.Name = "TimelineTrack"
-	newTrack.Text = trackData.TrackLabel or trackData.ComponentType or "" -- Use label if it exists
+	newTrack.Text = "" -- Text will be handled by a child TextLabel
 	newTrack.Size = UDim2.new(0, duration * zoomedPixelsPerSecond, 0, self.TRACK_HEIGHT)
-	newTrack.Position = UDim2.new(0, startTime * zoomedPixelsPerSecond, 0, yPos)
+	newTrack.Position = UDim2.new(0, startTime * zoomedPixelsPerSecond, 0, 0) -- Y position is now handled by UIListLayout
 	newTrack.Active = true
 
-	local componentType = trackData.ComponentType
-	if Config.TrackColors[componentType] then
-		newTrack.BackgroundColor3 = Config.TrackColors[componentType]
+	-- Determine the next available layout order
+	local maxLayoutOrder = 0
+	for _, child in ipairs(self.timeline:GetChildren()) do
+		if child:IsA("GuiObject") and child.Name == "TimelineTrack" then
+			maxLayoutOrder = math.max(maxLayoutOrder, child.LayoutOrder)
+		end
 	end
+	newTrack.LayoutOrder = trackData.LayoutOrder or (maxLayoutOrder + 1)
+
+
+	local componentType = trackData.ComponentType
+	local baseColor = Color3.fromRGB(80, 80, 80)
+	if Config.TrackColors[componentType] then
+		baseColor = Config.TrackColors[componentType]
+	end
+	newTrack.BackgroundColor3 = baseColor
+	newTrack:SetAttribute("BaseColor", baseColor)
+
+	-- Set default attributes if they don't exist
+	if trackData.IsLocked == nil then trackData.IsLocked = false end
+	if trackData.IsMuted == nil then trackData.IsMuted = false end
+	if trackData.IsSoloed == nil then trackData.IsSoloed = false end
 
 	for key, value in pairs(trackData) do
 		newTrack:SetAttribute(key, value)
 	end
-	newTrack:SetAttribute("Lane", nextLane)
+	newTrack:SetAttribute("LayoutOrder", newTrack.LayoutOrder)
 
 	-- Add a frame for the group color indicator
 	local groupColorIndicator = Instance.new("Frame")
 	groupColorIndicator.Name = "GroupColorIndicator"
-	groupColorIndicator.Size = UDim2.new(0, 5, 1, 0) -- 5 pixels wide, full height
+	groupColorIndicator.Size = UDim2.new(0, 5, 1, 0)
 	groupColorIndicator.Position = UDim2.new(0, 0, 0, 0)
-	groupColorIndicator.BackgroundColor3 = trackData.GroupColor or Color3.fromRGB(50, 50, 50) -- Default color
+	groupColorIndicator.BackgroundColor3 = trackData.GroupColor or Color3.fromRGB(50, 50, 50)
 	groupColorIndicator.BorderSizePixel = 0
 	groupColorIndicator.Parent = newTrack
 
+	-- Add Lock Button
+	local lockButton = Instance.new("ImageButton")
+	lockButton.Name = "LockButton"
+	lockButton.Size = UDim2.new(0, 16, 0, 16)
+	lockButton.Position = UDim2.new(0, 8, 0.5, -8)
+	lockButton.BackgroundTransparency = 1
+	lockButton.Parent = newTrack
+
+	-- Add Mute Button
+	local muteButton = Instance.new("TextButton")
+	muteButton.Name = "MuteButton"
+	muteButton.Size = UDim2.new(0, 18, 0, 18)
+	muteButton.Position = UDim2.new(0, 28, 0.5, -9)
+	muteButton.Text = "M"
+	muteButton.Font = Enum.Font.SourceSansBold
+	muteButton.TextSize = 12
+	muteButton.Parent = newTrack
+
+	-- Add Solo Button
+	local soloButton = Instance.new("TextButton")
+	soloButton.Name = "SoloButton"
+	soloButton.Size = UDim2.new(0, 18, 0, 18)
+	soloButton.Position = UDim2.new(0, 50, 0.5, -9)
+	soloButton.Text = "S"
+	soloButton.Font = Enum.Font.SourceSansBold
+	soloButton.TextSize = 12
+	soloButton.Parent = newTrack
+
+	-- Add TextLabel for track name
+	local trackLabel = Instance.new("TextLabel")
+	trackLabel.Name = "TrackLabel"
+	trackLabel.Size = UDim2.new(1, -75, 1, 0)
+	trackLabel.Position = UDim2.new(0, 72, 0, 0)
+	trackLabel.BackgroundTransparency = 1
+	trackLabel.Font = Config.Theme.Font
+	trackLabel.Text = trackData.TrackLabel or trackData.ComponentType or ""
+	trackLabel.TextColor3 = Color3.new(1, 1, 1)
+	trackLabel.TextXAlignment = Enum.TextXAlignment.Left
+	trackLabel.Parent = newTrack
+
+	self:_updateLockVisuals(newTrack, trackData.IsLocked)
+	self:_updateMuteSoloVisuals(newTrack)
+
 	newTrack.Parent = self.timeline
-	self:makeTrackInteractive(newTrack)
+
+	self.trackInteractor:makeTrackInteractive(newTrack)
+
 	return newTrack
 end
 
@@ -156,10 +253,17 @@ end
 
 -- PUBLIC, HISTORY-LOGGED ACTION: Delete selected tracks
 function TimelineManager:deleteSelectedTracks()
-	if next(self.selectedTracks) == nil then return end
+	-- Filter out locked tracks before proceeding
+	local tracksToDelete = {}
+	for track in pairs(self.selectedTracks) do
+		if not track:GetAttribute("IsLocked") then
+			table.insert(tracksToDelete, track)
+		end
+	end
+	if #tracksToDelete == 0 then return end
 
 	local deletedTracksData = {}
-	for track, _ in pairs(self.selectedTracks) do
+	for _, track in ipairs(tracksToDelete) do
 		local data = {}
 		for name, value in pairs(track:GetAttributes()) do data[name] = value end
 		table.insert(deletedTracksData, data)
@@ -167,10 +271,12 @@ function TimelineManager:deleteSelectedTracks()
 
 	local action = {
 		execute = function()
-			for track in pairs(self.selectedTracks) do
-				track:Destroy()
+			for _, track in ipairs(tracksToDelete) do
+				if self.selectedTracks[track] then
+					self.selectedTracks[track] = nil
+					track:Destroy()
+				end
 			end
-			self:deselectAllTracks()
 			self.TrackDeleted:Fire()
 		end,
 		undo = function()
@@ -184,17 +290,21 @@ end
 
 -- PUBLIC, HISTORY-LOGGED ACTION: Set track label
 function TimelineManager:setTrackLabel(track, newLabel)
+	if track:GetAttribute("IsLocked") then return end
 	local oldLabel = track:GetAttribute("TrackLabel") or nil
-	local oldText = track.Text
+	local trackLabel = track:FindFirstChild("TrackLabel")
+	if not trackLabel then return end
+
+	local oldText = trackLabel.Text
 
 	local action = {
 		execute = function()
 			track:SetAttribute("TrackLabel", newLabel)
-			track.Text = newLabel
+			trackLabel.Text = newLabel
 		end,
 		undo = function()
 			track:SetAttribute("TrackLabel", oldLabel)
-			track.Text = oldText
+			trackLabel.Text = oldText
 		end
 	}
 	self.historyManager:registerAction(action)
@@ -205,21 +315,39 @@ function TimelineManager:deselectAllTracks()
 	for track in pairs(self.selectedTracks) do
 		if track and track.Parent then
 			track:FindFirstChild("SelectionOutline").Enabled = false
+			local baseColor = track:GetAttribute("BaseColor")
+			if baseColor then
+				track.BackgroundColor3 = baseColor
+			end
 		end
 	end
 	self.selectedTracks = {}
 end
 
 function TimelineManager:addTrackToSelection(track)
+	-- No guard here, allow selecting locked tracks
 	if self.selectedTracks[track] then return end
 	self.selectedTracks[track] = true
 	track:FindFirstChild("SelectionOutline").Enabled = true
+	track.BackgroundColor3 = track.BackgroundColor3:Lerp(Color3.new(1,1,1), 0.3)
 end
 
 function TimelineManager:removeTrackFromSelection(track)
 	if not self.selectedTracks[track] then return end
 	self.selectedTracks[track] = nil
 	track:FindFirstChild("SelectionOutline").Enabled = false
+	local baseColor = track:GetAttribute("BaseColor")
+	if baseColor then
+		track.BackgroundColor3 = baseColor
+	end
+end
+
+function TimelineManager:getSelectedTracksTable()
+	local tracks = {}
+	for track in pairs(self.selectedTracks) do
+		table.insert(tracks, track)
+	end
+	return tracks
 end
 
 function TimelineManager:clearTimeline()
@@ -234,14 +362,19 @@ function TimelineManager:clearTimeline()
 end
 
 function TimelineManager:copySelectedTracks()
-	if next(self.selectedTracks) == nil then return end
 	self.copiedTracksData = {}
 	for track in pairs(self.selectedTracks) do
-		local data = {}
-		for name, value in pairs(track:GetAttributes()) do
-			data[name] = value
+		-- Do not copy locked tracks
+		if not track:GetAttribute("IsLocked") then
+			local data = {}
+			for name, value in pairs(track:GetAttributes()) do
+				data[name] = value
+			end
+			table.insert(self.copiedTracksData, data)
 		end
-		table.insert(self.copiedTracksData, data)
+	end
+	if #self.copiedTracksData == 0 then
+		self.copiedTracksData = nil
 	end
 end
 
@@ -264,6 +397,86 @@ function TimelineManager:pasteTracksAtTime(time)
 	end
 
 	self:createTracks(tracksToCreate)
+end
+
+function TimelineManager:setTrackLockState(tracks, isLocked)
+	local originalStates = {}
+	for _, track in ipairs(tracks) do
+		originalStates[track] = track:GetAttribute("IsLocked") or false
+	end
+
+	local action = {
+		execute = function()
+			for _, track in ipairs(tracks) do
+				track:SetAttribute("IsLocked", isLocked)
+				self:_updateLockVisuals(track, isLocked)
+				if isLocked and self.selectedTracks[track] then
+					self:removeTrackFromSelection(track)
+				end
+			end
+			self.TrackSelected:Fire(self.selectedTracks)
+		end,
+		undo = function()
+			for track, originalState in pairs(originalStates) do
+				track:SetAttribute("IsLocked", originalState)
+				self:_updateLockVisuals(track, originalState)
+			end
+		end
+	}
+	self.historyManager:registerAction(action)
+end
+
+-- NON-HISTORY-LOGGED ACTION: Toggle Mute state
+function TimelineManager:_toggleMute(track)
+	local isMuted = not track:GetAttribute("IsMuted")
+	track:SetAttribute("IsMuted", isMuted)
+	self:_updateMuteSoloVisuals(track)
+	self.MuteSoloChanged:Fire()
+end
+
+-- NON-HISTORY-LOGGED ACTION: Toggle Solo state
+function TimelineManager:_toggleSolo(track)
+	local isSoloed = not track:GetAttribute("IsSoloed")
+	-- Unsolo all other tracks if this one is being soloed
+	if isSoloed then
+		for _, otherTrack in ipairs(self.timeline:GetChildren()) do
+			if otherTrack.Name == "TimelineTrack" and otherTrack ~= track and otherTrack:GetAttribute("IsSoloed") then
+				otherTrack:SetAttribute("IsSoloed", false)
+				self:_updateMuteSoloVisuals(otherTrack)
+			end
+		end
+	end
+	track:SetAttribute("IsSoloed", isSoloed)
+	self:_updateMuteSoloVisuals(track)
+	self.MuteSoloChanged:Fire()
+end
+
+function TimelineManager:getTrackStates()
+	local states = {}
+	local isAnyTrackSoloed = false
+	for _, track in ipairs(self.timeline:GetChildren()) do
+		if track.Name == "TimelineTrack" and track:GetAttribute("IsSoloed") then
+			isAnyTrackSoloed = true
+			break
+		end
+	end
+
+	for _, track in ipairs(self.timeline:GetChildren()) do
+		if track.Name == "TimelineTrack" then
+			local isMuted = track:GetAttribute("IsMuted")
+			local isSoloed = track:GetAttribute("IsSoloed")
+			local isVisible = true
+			if isAnyTrackSoloed then
+				isVisible = isSoloed
+			elseif isMuted then
+				isVisible = false
+			end
+			states[track] = {
+				IsVisible = isVisible
+			}
+		end
+	end
+	return states
 end
 
 function TimelineManager:setGroupColorForSelectedTracks(color)
@@ -331,8 +544,8 @@ function TimelineManager:redrawTimeline()
 		if child:IsA("TextButton") and child.Name == "TimelineTrack" then
 			local startTime, duration = child:GetAttribute("StartTime"), child:GetAttribute("Duration")
 			if startTime and duration then
-				child.Position = UDim2.new(0, startTime * self.PIXELS_PER_SECOND * self.zoom, 0, child.Position.Y.Offset)
-				child.Size = UDim2.new(0, duration * self.PIXELS_PER_SECOND * self.zoom, 0, child.Size.Y.Offset)
+				child.Position = UDim2.new(0, startTime * self.PIXELS_PER_SECOND * self.zoom, 0, 0) -- Y is handled by layout
+				child.Size = UDim2.new(0, duration * self.PIXELS_PER_SECOND * self.zoom, 0, self.TRACK_HEIGHT)
 			end
 		end
 	end
@@ -360,24 +573,8 @@ function TimelineManager:drawTimelineGrid()
 	end
 end
 
-function TimelineManager:findNextAvailableLane(startTime, endTime)
-	local lanes = {}
-	for _, child in ipairs(self.timeline:GetChildren()) do
-		if child:IsA("TextButton") and child.Name == "TimelineTrack" then
-			local lane, s, d = child:GetAttribute("Lane"), child:GetAttribute("StartTime"), child:GetAttribute("Duration")
-			if lane and s and d then
-				if not (endTime <= s or startTime >= s + d) then
-					lanes[lane] = true
-				end
-			end
-		end
-	end
-	local nextLane = 1
-	while lanes[nextLane] do nextLane = nextLane + 1 end
-	return nextLane
-end
-
 function TimelineManager:addDefaultAttributes(trackData)
+	trackData.IsLocked = false
 	local c = trackData.ComponentType
 	if c == 'Light' then trackData.Enabled=true; trackData.Brightness=1; trackData.Color=Color3.fromRGB(255,255,255); trackData.Range=8; trackData.Shadows=false
 	elseif c == 'SpotLight' or c == 'SurfaceLight' then trackData.Enabled=true; trackData.Brightness=1; trackData.Color=Color3.fromRGB(255,255,255); trackData.Range=8; trackData.Angle=60; trackData.Face="Front"; trackData.Shadows=false
@@ -420,203 +617,20 @@ function TimelineManager:createTrackFromPreset(presetName, time)
 	self:createTracks({trackData})
 end
 
-
-function TimelineManager:makeTrackInteractive(track)
-	local outline = Instance.new("UIStroke"); outline.Name = "SelectionOutline"; outline.Color = Color3.fromRGB(255, 255, 0); outline.Thickness = 2; outline.Enabled = false; outline.Parent = track
-
-	track.MouseButton1Down:Connect(function()
-		self.ui.ContextMenu.Visible = false
-		local currentTime = tick()
-
-		if (currentTime - self.lastClickTime) < self.DOUBLE_CLICK_SPEED and self.lastClickedTrack == track then
-			-- Double click detected
-			self.lastClickTime = 0 -- Reset to prevent triple-click
-
-			local editBox = Instance.new("TextBox")
-			editBox.Size = UDim2.new(1, 0, 1, 0)
-			editBox.Position = UDim2.new(0, 0, 0, 0)
-			editBox.BackgroundColor3 = Config.Theme.Background
-			editBox.TextColor3 = Config.Theme.Text
-			editBox.Font = Config.Theme.Font
-			editBox.Text = track:GetAttribute("TrackLabel") or track:GetAttribute("ComponentType") or ""
-			editBox.TextXAlignment = Enum.TextXAlignment.Left
-			editBox.Parent = track
-			editBox:CaptureFocus()
-
-			editBox.FocusLost:Connect(function(enterPressed)
-				if enterPressed then
-					self:setTrackLabel(track, editBox.Text)
-				end
-				editBox:Destroy()
-			end)
-			return -- End early to not trigger selection
-		end
-
-		self.lastClickTime = currentTime
-		self.lastClickedTrack = track
-
-		local isCtrlDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
-		if isCtrlDown then
-			if self.selectedTracks[track] then self:removeTrackFromSelection(track) else self:addTrackToSelection(track) end
-		else
-			if not self.selectedTracks[track] then self:deselectAllTracks(); self:addTrackToSelection(track) end
-		end
-		self.TrackSelected:Fire(self.selectedTracks)
-	end)
-
-	track.MouseButton2Down:Connect(function(x, y)
-		if not self.selectedTracks[track] then self:deselectAllTracks(); self:addTrackToSelection(track); self.TrackSelected:Fire(self.selectedTracks) end
-		local relativeMouseX = x - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
-		self.pasteTime = relativeMouseX / (self.PIXELS_PER_SECOND * self.zoom)
-		self:showContextMenu(x, y, {showCopy = true, showPaste = self.copiedTracksData ~= nil, showCreate = true})
-	end)
-
-	local dragging, dragStart, originalStates = false, 0, {}
-	track.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 and input.Position then
-			dragging = true
-			dragStart = input.Position.X
-			originalStates = {}
-			for t in pairs(self.selectedTracks) do
-				originalStates[t] = {Position = t.Position, StartTime = t:GetAttribute("StartTime")}
-			end
-		end
-	end)
-
-	track.InputChanged:Connect(function(input)
-		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement and input.Position then
-			local delta = input.Position.X - dragStart
-			for t, state in pairs(originalStates) do
-				t.Position = UDim2.new(0, state.Position.X.Offset + delta, 0, t.Position.Y.Offset)
-			end
-			if math.abs(track.Position.X.Offset - self.playhead.Position.X.Offset) < self.PLAYHEAD_SNAP_DISTANCE then
-				self.playhead.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
-			else
-				self.playhead.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-			end
-		end
-	end)
-
-	track.InputEnded:Connect(function(input)
-		if dragging and input.UserInputType == Enum.UserInputType.MouseButton1 then
-			dragging = false
-			self.playhead.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-
-			local finalStates = {}
-			local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
-			local primaryTrackPos = track.Position.X.Offset
-			local finalPrimaryPos
-
-			if math.abs(primaryTrackPos - self.playhead.Position.X.Offset) < self.PLAYHEAD_SNAP_DISTANCE then
-				finalPrimaryPos = self.playhead.Position.X.Offset
-			else
-				local snappedStart = math.floor((primaryTrackPos / zoomedPixelsPerSecond) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
-				finalPrimaryPos = snappedStart * zoomedPixelsPerSecond
-			end
-
-			local finalDelta = finalPrimaryPos - originalStates[track].Position.X.Offset
-			for t, state in pairs(originalStates) do
-				local newPos = state.Position.X.Offset + finalDelta
-				finalStates[t] = {Position = UDim2.new(0, newPos, 0, t.Position.Y.Offset), StartTime = newPos / zoomedPixelsPerSecond}
-			end
-
-			local action = {
-				execute = function() for t, s in pairs(finalStates) do t.Position = s.Position; t:SetAttribute("StartTime", s.StartTime) end end,
-				undo = function() for t, s in pairs(originalStates) do t.Position = s.Position; t:SetAttribute("StartTime", s.StartTime) end end
-			}
-			self.historyManager:registerAction(action)
-		end
-	end)
-
-	local function createHandle(side)
-		local handle = Instance.new("Frame"); handle.Size = UDim2.new(0, 8, 1, 0); handle.Position = (side == "Left") and UDim2.new(0, -4, 0, 0) or UDim2.new(1, -4, 0, 0); handle.BackgroundColor3 = Color3.fromRGB(255, 255, 0); handle.Parent = track; handle.Active = true
-		local resizing, resizeStart, originalSize, originalPos = false, 0, 0, 0
-
-		handle.InputBegan:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 and input.Position then
-				resizing = true; resizeStart = input.Position.X; originalSize = track.Size.X.Offset; originalPos = track.Position.X.Offset
-			end
-		end)
-
-		handle.InputChanged:Connect(function(input)
-			if resizing and input.UserInputType == Enum.UserInputType.MouseMovement and input.Position then
-				local delta = input.Position.X - resizeStart
-				local edgePos
-				if side == "Left" then
-					edgePos = originalPos + delta
-					track.Position = UDim2.new(0, edgePos, 0, track.Position.Y.Offset)
-					track.Size = UDim2.new(0, originalSize - delta, 0, track.Size.Y.Offset)
-				else
-					edgePos = originalPos + originalSize + delta
-					track.Size = UDim2.new(0, originalSize + delta, 0, track.Size.Y.Offset)
-				end
-				if math.abs(edgePos - self.playhead.Position.X.Offset) < self.PLAYHEAD_SNAP_DISTANCE then self.playhead.BackgroundColor3 = Color3.fromRGB(255, 255, 0) else self.playhead.BackgroundColor3 = Color3.fromRGB(255, 50, 50) end
-			end
-		end)
-
-		handle.InputEnded:Connect(function(input)
-			if resizing and input.UserInputType == Enum.UserInputType.MouseButton1 then
-				resizing = false
-				self.playhead.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-
-				local originalState = {Position = UDim2.new(0, originalPos, 0, track.Position.Y.Offset), Size = UDim2.new(0, originalSize, 0, track.Size.Y.Offset), StartTime = track:GetAttribute("StartTime"), Duration = track:GetAttribute("Duration")}
-				local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
-				local finalPos, finalSize = track.Position.X.Offset, track.Size.X.Offset
-
-				if side == "Left" and math.abs(finalPos - self.playhead.Position.X.Offset) < self.PLAYHEAD_SNAP_DISTANCE then
-					local oldEndTime = (originalPos + originalSize) / zoomedPixelsPerSecond
-					finalPos = self.playhead.Position.X.Offset
-					track:SetAttribute("Duration", oldEndTime - (finalPos / zoomedPixelsPerSecond))
-				elseif side == "Right" and math.abs(finalPos + finalSize - self.playhead.Position.X.Offset) < self.PLAYHEAD_SNAP_DISTANCE then
-					finalSize = self.playhead.Position.X.Offset - finalPos
-					track:SetAttribute("Duration", finalSize / zoomedPixelsPerSecond)
-				else
-					local snappedStart = math.floor((finalPos / zoomedPixelsPerSecond) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
-					local snappedEnd = math.floor(((finalPos + finalSize) / zoomedPixelsPerSecond) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
-					track:SetAttribute("StartTime", snappedStart)
-					track:SetAttribute("Duration", snappedEnd - snappedStart)
-				end
-
-				self:redrawTimeline()
-
-				local finalState = {Position = track.Position, Size = track.Size, StartTime = track:GetAttribute("StartTime"), Duration = track:GetAttribute("Duration")}
-				local action = {
-					execute = function() track.Position = finalState.Position; track.Size = finalState.Size; track:SetAttribute("StartTime", finalState.StartTime); track:SetAttribute("Duration", finalState.Duration) end,
-					undo = function() track.Position = originalState.Position; track.Size = originalState.Size; track:SetAttribute("StartTime", originalState.StartTime); track:SetAttribute("Duration", originalState.Duration) end
-				}
-				self.historyManager:registerAction(action)
-			end
-		end)
-	end
-	createHandle("Left"); createHandle("Right")
-end
-
 function TimelineManager:connectEvents()
-	local function startDrawing(componentType) self.drawingMode = componentType end
-	self.ui.LightButtons.DrawButton.MouseButton1Click:Connect(function() startDrawing('Light') end)
-	self.ui.SoundButtons.DrawButton.MouseButton1Click:Connect(function() startDrawing('Sound') end)
-	self.ui.ParticleButtons.DrawButton.MouseButton1Click:Connect(function() startDrawing('Particle') end)
-	self.ui.SpotLightButtons.DrawButton.MouseButton1Click:Connect(function() startDrawing('SpotLight') end)
-	self.ui.SurfaceLightButtons.DrawButton.MouseButton1Click:Connect(function() startDrawing('SurfaceLight') end)
-	self.ui.BeamButtons.DrawButton.MouseButton1Click:Connect(function() startDrawing('Beam') end)
-	self.ui.TrailButtons.DrawButton.MouseButton1Click:Connect(function() startDrawing('Trail') end)
-
-	local function addAtPlayhead(componentType)
-		local playheadTime = self.playhead.Position.X.Offset / (self.PIXELS_PER_SECOND * self.zoom)
-		local trackData = {ComponentType = componentType, StartTime = playheadTime, Duration = 1}
-		self:addDefaultAttributes(trackData)
-		self:createTracks({trackData})
-	end
-	self.ui.LightButtons.AddAtPlayheadButton.MouseButton1Click:Connect(function() addAtPlayhead('Light') end)
-	self.ui.SoundButtons.AddAtPlayheadButton.MouseButton1Click:Connect(function() addAtPlayhead('Sound') end)
-	self.ui.ParticleButtons.AddAtPlayheadButton.MouseButton1Click:Connect(function() addAtPlayhead('Particle') end)
-	self.ui.SpotLightButtons.AddAtPlayheadButton.MouseButton1Click:Connect(function() addAtPlayhead('SpotLight') end)
-	self.ui.SurfaceLightButtons.AddAtPlayheadButton.MouseButton1Click:Connect(function() addAtPlayhead('SurfaceLight') end)
-	self.ui.BeamButtons.AddAtPlayheadButton.MouseButton1Click:Connect(function() addAtPlayhead('Beam') end)
-	self.ui.TrailButtons.AddAtPlayheadButton.MouseButton1Click:Connect(function() addAtPlayhead('Trail') end)
-
 	self.ui.CopyButton.MouseButton1Click:Connect(function() self:copySelectedTracks() end)
 	self.ui.PasteButton.MouseButton1Click:Connect(function() self:pasteTracksAtTime(self.pasteTime) end)
+
+	self.ui.ClearAllButton.MouseButton1Click:Connect(function()
+		UIManager.showConfirmationDialog(
+			self.ui,
+			"Clear Timeline",
+			"Are you sure you want to delete all tracks? This action cannot be undone.",
+			function()
+				self:clearTimeline()
+			end
+		)
+	end)
 
 	self.timeline.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
