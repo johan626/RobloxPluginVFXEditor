@@ -72,7 +72,7 @@ function ComponentDragger:_connectEvents()
 				local tlBottomRight = tlTopLeft + timeline.AbsoluteSize
 
 				if mousePos.X >= tlTopLeft.X and mousePos.X <= tlBottomRight.X and
-				   mousePos.Y >= tlTopLeft.Y and mousePos.Y <= tlBottomRight.Y then
+					mousePos.Y >= tlTopLeft.Y and mousePos.Y <= tlBottomRight.Y then
 
 					self.ComponentDropped:Fire(self.draggedComponentType, self.isPreset, mousePos)
 				end
