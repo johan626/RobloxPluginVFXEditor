@@ -32,24 +32,25 @@ local Config = {
 	},
 
 	Theme = {
-		Background = Color3.fromRGB(31, 31, 31),
-		TopBar = Color3.fromRGB(41, 41, 41),
-		Timeline = Color3.fromRGB(35, 35, 35),
-		Properties = Color3.fromRGB(45, 45, 45),
-		ComponentLibrary = Color3.fromRGB(45, 45, 45),
+		-- Studio Dark Theme Inspired Colors
+		Background = Color3.fromRGB(40, 42, 45),
+		TopBar = Color3.fromRGB(43, 45, 48),
+		Timeline = Color3.fromRGB(35, 37, 40),
+		Properties = Color3.fromRGB(48, 50, 53),
+		ComponentLibrary = Color3.fromRGB(48, 50, 53),
 
-		Button = Color3.fromRGB(80, 80, 80),
-		ButtonHover = Color3.fromRGB(100, 100, 100),
-		ButtonPressed = Color3.fromRGB(60, 60, 60),
-		ButtonAccent = Color3.fromRGB(120, 120, 120),
-		ButtonDisabled = Color3.fromRGB(50, 50, 50),
+		Button = Color3.fromRGB(68, 70, 74),
+		ButtonHover = Color3.fromRGB(80, 82, 86),
+		ButtonPressed = Color3.fromRGB(60, 62, 65),
+		ButtonAccent = Color3.fromRGB(50, 52, 55), -- Used for borders
+		ButtonDisabled = Color3.fromRGB(55, 57, 60),
 
-		Text = Color3.fromRGB(220, 220, 220),
-		TextDark = Color3.fromRGB(180, 180, 180),
-		TextDisabled = Color3.fromRGB(120, 120, 120),
+		Text = Color3.fromRGB(220, 221, 222),
+		TextDark = Color3.fromRGB(160, 162, 164),
+		TextDisabled = Color3.fromRGB(120, 122, 124),
 
-		Accent = Color3.fromRGB(0, 122, 204),
-		AccentDestructive = Color3.fromRGB(204, 36, 29),
+		Accent = Color3.fromRGB(0, 120, 215),
+		AccentDestructive = Color3.fromRGB(231, 76, 60),
 
 		Font = Enum.Font.SourceSans,
 		FontSize = 14
