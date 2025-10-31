@@ -20,7 +20,7 @@ local ENUM_OPTIONS = {
 	RollOffMode = {"Inverse", "Linear", "LinearSquare", "InverseTapered"}
 }
 local PROPERTY_CATEGORIES = {
-	{ Name = "General", Properties = {"ComponentType", "Lane", "Enabled", "TimeScale"} },
+	{ Name = "General", Properties = {"ComponentType", "LayoutOrder", "Enabled", "TimeScale", "IsLocked"} },
 	{ Name = "Appearance", Properties = {"Color", "Texture", "LightEmission", "LightInfluence", "Transparency", "Size", "Squash", "ZOffset", "FaceCamera", "Orientation"} },
 	{ Name = "Emission", Properties = {"Rate", "Lifetime", "Speed", "SpreadAngle", "EmissionDirection"} },
 	{ Name = "Motion", Properties = {"Acceleration", "Drag", "Rotation", "RotSpeed"} },
@@ -40,7 +40,7 @@ local PROPERTY_TYPES = {
 local function createMultiTrackUpdateAction(tracks, propertyName, newValue, historyManager)
 	local originalValues = {}
 	for _, track in ipairs(tracks) do
-		table.insert(originalValues, {track = track, value = track:GetAttribute(propertyName)})
+		originalValues[track] = track:GetAttribute(propertyName)
 	end
 
 	local action = {
@@ -50,8 +50,10 @@ local function createMultiTrackUpdateAction(tracks, propertyName, newValue, hist
 			end
 		end,
 		undo = function()
-			for _, data in ipairs(originalValues) do
-				data.track:SetAttribute(propertyName, data.value)
+			for track, originalValue in pairs(originalValues) do
+				if track and track.Parent then -- Guard against undone track deletions
+					track:SetAttribute(propertyName, originalValue)
+				end
 			end
 		end
 	}
@@ -78,14 +80,14 @@ local function createPropertyUI(panel, name, layoutOrder, isSequence)
 	local height = isSequence and 80 or 25
 	local propFrame = Instance.new("Frame")
 	propFrame.LayoutOrder = layoutOrder
-	propFrame.Size = UDim2.new(1, -10, 0, height)
+	propFrame.Size = UDim2.new(1, 0, 0, height)
 	propFrame.BackgroundTransparency = 1
 	propFrame.Parent = panel
 
 	local propLabel = Instance.new("TextLabel")
-	propLabel.Size = UDim2.new(0.4, 0, 0, 25)
+	propLabel.Size = UDim2.new(0.4, 0, 1, 0)
 	propLabel.BackgroundTransparency = 1
-	propLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+	propLabel.TextColor3 = Config.Theme.Text
 	propLabel.Text = name
 	propLabel.TextXAlignment = Enum.TextXAlignment.Left
 	propLabel.Parent = propFrame
@@ -104,36 +106,40 @@ local function styleInput(textbox, isValid)
 	end
 end
 
-local function styleGenericInput(textbox)
+local function styleGenericInput(textbox, isLocked)
 	local theme = Config.Theme
-	textbox.BackgroundColor3 = theme.Button
-	textbox.TextColor3 = theme.Text
+	textbox.BackgroundColor3 = isLocked and theme.ButtonDisabled or theme.Button
+	textbox.TextColor3 = isLocked and theme.TextDisabled or theme.Text
 	textbox.Font = theme.Font
 	textbox.TextSize = theme.FontSize
 	textbox.BorderSizePixel = 1
 	textbox.BorderColor3 = theme.ButtonAccent
+	textbox.Active = not isLocked
 end
 
-local function createGenericInput(parent, name, value, tracks, historyManager)
+local function createGenericInput(parent, name, value, tracks, historyManager, isLocked)
 	local valueType = typeof(tracks[1]:GetAttribute(name))
 	local propInput = Instance.new("TextBox")
-	propInput.Size = UDim2.new(0.6, 0, 1, 0); propInput.Position = UDim2.new(0.4, 0, 0, 0); styleGenericInput(propInput); propInput.Parent = parent
+	propInput.Size = UDim2.new(0.6, 0, 1, 0); propInput.Position = UDim2.new(0.4, 0, 0, 0); styleGenericInput(propInput, isLocked); propInput.Parent = parent
 	if value == MIXED_VALUE then propInput.PlaceholderText = "<Mixed>" else propInput.Text = tostring(value) end
-	propInput.FocusLost:Connect(function(enterPressed)
-		if not enterPressed or propInput.Text == "" then return end
-		local textValue = propInput.Text; local newValue
-		if valueType == "number" then newValue = tonumber(textValue); if not newValue then styleInput(propInput, false); return end
-		elseif valueType == "boolean" then if textValue:lower() == "true" then newValue = true elseif textValue:lower() == "false" then newValue = false else styleInput(propInput, false); return end
-		else newValue = textValue end
-		styleInput(propInput, true)
-		createMultiTrackUpdateAction(tracks, name, newValue, historyManager)
-	end)
+
+	if not isLocked then
+		propInput.FocusLost:Connect(function(enterPressed)
+			if not enterPressed or propInput.Text == "" then return end
+			local textValue = propInput.Text; local newValue
+			if valueType == "number" then newValue = tonumber(textValue); if not newValue then styleInput(propInput, false); return end
+			elseif valueType == "boolean" then if textValue:lower() == "true" then newValue = true elseif textValue:lower() == "false" then newValue = false else styleInput(propInput, false); return end
+			else newValue = textValue end
+			styleInput(propInput, true)
+			createMultiTrackUpdateAction(tracks, name, newValue, historyManager)
+		end)
+	end
 end
 
-local function createEnumDropdown(parent, name, value, tracks, historyManager)
+local function createEnumDropdown(parent, name, value, tracks, historyManager, isLocked)
 	local theme = Config.Theme; local options = ENUM_OPTIONS[name]; if not options then return end
 	local dropdownFrame = Instance.new("Frame"); dropdownFrame.Size = UDim2.new(0.6, 0, 1, 0); dropdownFrame.Position = UDim2.new(0.4, 0, 0, 0); dropdownFrame.BackgroundTransparency = 1; dropdownFrame.Parent = parent; dropdownFrame.ZIndex = 2
-	local mainButton = Instance.new("TextButton"); mainButton.Size = UDim2.new(1, 0, 1, 0); mainButton.BackgroundColor3 = theme.Button; mainButton.TextColor3 = theme.Text; mainButton.Parent = dropdownFrame
+	local mainButton = Instance.new("TextButton"); mainButton.Size = UDim2.new(1, 0, 1, 0); mainButton.BackgroundColor3 = isLocked and theme.ButtonDisabled or theme.Button; mainButton.TextColor3 = isLocked and theme.TextDisabled or theme.Text; mainButton.Parent = dropdownFrame; mainButton.Active = not isLocked
 	if value == MIXED_VALUE then mainButton.Text = "<Mixed>" else mainButton.Text = tostring(value) end
 	local optionsList = Instance.new("ScrollingFrame"); optionsList.Size = UDim2.new(1, 0, 0, 100); optionsList.Position = UDim2.new(0, 0, 1, 0); optionsList.BackgroundColor3 = theme.Properties; optionsList.BorderSizePixel = 1; optionsList.BorderColor3 = theme.ButtonAccent; optionsList.Visible = false; optionsList.Parent = dropdownFrame; optionsList.ZIndex = 3
 	local listLayout = Instance.new("UIListLayout"); listLayout.Parent = optionsList
@@ -144,20 +150,22 @@ local function createEnumDropdown(parent, name, value, tracks, historyManager)
 	mainButton.MouseButton1Click:Connect(function() optionsList.Visible = not optionsList.Visible end)
 end
 
-local function createNumberRangeInput(parent, name, value, tracks, historyManager)
+local function createNumberRangeInput(parent, name, value, tracks, historyManager, isLocked)
 	local rangeFrame = Instance.new("Frame"); rangeFrame.Size = UDim2.new(0.6, 0, 1, 0); rangeFrame.Position = UDim2.new(0.4, 0, 0, 0); rangeFrame.BackgroundTransparency = 1; rangeFrame.Parent = parent
 	local layout = Instance.new("UIListLayout"); layout.FillDirection = Enum.FillDirection.Horizontal; layout.Parent = rangeFrame
-	local function createRangeInput() local input = Instance.new("TextBox"); input.Size = UDim2.new(0.5, -2, 1, 0); input.Parent = rangeFrame; styleGenericInput(input); return input end
+	local function createRangeInput() local input = Instance.new("TextBox"); input.Size = UDim2.new(0.5, -2, 1, 0); input.Parent = rangeFrame; styleGenericInput(input, isLocked); return input end
 	local minInput, maxInput = createRangeInput(), createRangeInput()
 	if value == MIXED_VALUE then minInput.PlaceholderText = "<Mixed>"; maxInput.PlaceholderText = "<Mixed>" else local parts = tostring(value):split(" "); minInput.Text = parts[1] or "0"; maxInput.Text = parts[2] or parts[1] or "0" end
-	local function onFocusLost() if minInput.Text == "" or maxInput.Text == "" then return end; local minV, maxV = tonumber(minInput.Text), tonumber(maxInput.Text); if minV and maxV then styleInput(minInput, true); styleInput(maxInput, true); createMultiTrackUpdateAction(tracks, name, string.format("%s %s", minV, maxV), historyManager) else styleInput(minInput, tonumber(minInput.Text) ~= nil); styleInput(maxInput, tonumber(maxInput.Text) ~= nil) end end
-	minInput.FocusLost:Connect(onFocusLost); maxInput.FocusLost:Connect(onFocusLost)
+	if not isLocked then
+		local function onFocusLost() if minInput.Text == "" or maxInput.Text == "" then return end; local minV, maxV = tonumber(minInput.Text), tonumber(maxInput.Text); if minV and maxV then styleInput(minInput, true); styleInput(maxInput, true); createMultiTrackUpdateAction(tracks, name, string.format("%s %s", minV, maxV), historyManager) else styleInput(minInput, tonumber(minInput.Text) ~= nil); styleInput(maxInput, tonumber(maxInput.Text) ~= nil) end end
+		minInput.FocusLost:Connect(onFocusLost); maxInput.FocusLost:Connect(onFocusLost)
+	end
 end
 
-local function createColor3Input(parent, name, value, tracks, historyManager)
+local function createColor3Input(parent, name, value, tracks, historyManager, isLocked)
 	local container = Instance.new("Frame"); container.Size = UDim2.new(0.6, 0, 1, 0); container.Position = UDim2.new(0.4, 0, 0, 0); container.BackgroundTransparency = 1; container.Parent = parent
-	local colorButton = Instance.new("TextButton"); colorButton.Size = UDim2.new(1, 0, 1, 0); colorButton.Parent = container
-	if value == MIXED_VALUE then colorButton.Text = "<Mixed>"; colorButton.BackgroundColor3 = Color3.fromRGB(80, 80, 80) else colorButton.Text = ""; colorButton.BackgroundColor3 = value end
+	local colorButton = Instance.new("TextButton"); colorButton.Size = UDim2.new(1, 0, 1, 0); colorButton.Parent = container; colorButton.Active = not isLocked
+	if value == MIXED_VALUE then colorButton.Text = "<Mixed>"; colorButton.BackgroundColor3 = isLocked and Config.Theme.ButtonDisabled or Color3.fromRGB(80, 80, 80) else colorButton.Text = ""; colorButton.BackgroundColor3 = value end
 	local pickerPopup = Instance.new("Frame"); pickerPopup.Size = UDim2.new(0, 150, 0, 180); pickerPopup.Position = UDim2.new(1, 5, 0, 0); pickerPopup.BackgroundColor3 = Config.Theme.TopBar; pickerPopup.BorderSizePixel = 1; pickerPopup.BorderColor3 = Config.Theme.ButtonAccent; pickerPopup.Visible = false; pickerPopup.ZIndex = 10; pickerPopup.Parent = container
 	local h, s, v = (value ~= MIXED_VALUE and value or Color3.new(1,1,1)):ToHSV()
 	local svPicker = Instance.new("ImageButton"); svPicker.Size = UDim2.new(1, -25, 0, 120); svPicker.Position = UDim2.new(0, 10, 0, 10); svPicker.BackgroundColor3 = Color3.fromHSV(h, 1, 1); svPicker.Parent = pickerPopup
@@ -174,25 +182,34 @@ local function createColor3Input(parent, name, value, tracks, historyManager)
 	colorButton.MouseButton1Click:Connect(function() pickerPopup.Visible = not pickerPopup.Visible end)
 end
 
-local function createVector3Input(parent, name, value, tracks, historyManager)
+local function createVector3Input(parent, name, value, tracks, historyManager, isLocked)
 	local vecFrame = Instance.new("Frame"); vecFrame.Size = UDim2.new(0.6, 0, 1, 0); vecFrame.Position = UDim2.new(0.4, 0, 0, 0); vecFrame.BackgroundTransparency = 1; vecFrame.Parent = parent
 	local layout = Instance.new("UIListLayout"); layout.FillDirection = Enum.FillDirection.Horizontal; layout.Parent = vecFrame
-	local function createVecInput() local input = Instance.new("TextBox"); input.Size = UDim2.new(0.33, -2, 1, 0); input.Parent = vecFrame; styleGenericInput(input); return input end
+	local function createVecInput() local input = Instance.new("TextBox"); input.Size = UDim2.new(0.33, -2, 1, 0); input.Parent = vecFrame; styleGenericInput(input, isLocked); return input end
 	local xInput, yInput, zInput = createVecInput(), createVecInput(), createVecInput()
 	if value == MIXED_VALUE then xInput.PlaceholderText, yInput.PlaceholderText, zInput.PlaceholderText = "<X>", "<Y>", "<Z>" else local parts = value:split(","); xInput.Text, yInput.Text, zInput.Text = parts[1] or "0", parts[2] or "0", parts[3] or "0" end
-	local function onFocusLost() if xInput.Text == "" or yInput.Text == "" or zInput.Text == "" then return end; local xV,yV,zV = tonumber(xInput.Text), tonumber(yInput.Text), tonumber(zInput.Text); if xV and yV and zV then styleInput(xInput,true); styleInput(yInput,true); styleInput(zInput,true); createMultiTrackUpdateAction(tracks, name, string.format("%s,%s,%s", xV,yV,zV), historyManager) else styleInput(xInput, tonumber(xInput.Text) ~= nil); styleInput(yInput, tonumber(yInput.Text) ~= nil); styleInput(zInput, tonumber(zInput.Text) ~= nil) end end
-	xInput.FocusLost:Connect(onFocusLost); yInput.FocusLost:Connect(onFocusLost); zInput.FocusLost:Connect(onFocusLost)
+	if not isLocked then
+		local function onFocusLost() if xInput.Text == "" or yInput.Text == "" or zInput.Text == "" then return end; local xV,yV,zV = tonumber(xInput.Text), tonumber(yInput.Text), tonumber(zInput.Text); if xV and yV and zV then styleInput(xInput,true); styleInput(yInput,true); styleInput(zInput,true); createMultiTrackUpdateAction(tracks, name, string.format("%s,%s,%s", xV,yV,zV), historyManager) else styleInput(xInput, tonumber(xInput.Text) ~= nil); styleInput(yInput, tonumber(yInput.Text) ~= nil); styleInput(zInput, tonumber(zInput.Text) ~= nil) end end
+		xInput.FocusLost:Connect(onFocusLost); yInput.FocusLost:Connect(onFocusLost); zInput.FocusLost:Connect(onFocusLost)
+	end
 end
 
-local function createSequenceInput(parent, name, value, tracks, historyManager, sequenceType)
+local function createSequenceInput(parent, name, value, tracks, historyManager, sequenceType, isLocked)
 	local container = Instance.new("Frame"); container.Name = "GradientEditorContainer"; container.Size = UDim2.new(0.6, 0, 1, 0); container.Position = UDim2.new(0.4, 0, 0, 0); container.BackgroundTransparency = 1; container.Parent = parent
 	local sequenceString = (value ~= MIXED_VALUE) and tostring(value) or (sequenceType == "Color" and "0,1,1,1;1,0,0,0" or "0,1;1,0")
 	if value == MIXED_VALUE then
 		local mixedLabel = Instance.new("TextLabel"); mixedLabel.Size = UDim2.new(1, 0, 0, 15); mixedLabel.Position = UDim2.new(0, 0, 0, -15); mixedLabel.BackgroundTransparency = 1; mixedLabel.TextColor3 = Color3.fromRGB(200, 200, 100); mixedLabel.Text = "Mixed Values - editing will override all."; mixedLabel.Font = Enum.Font.SourceSansItalic; mixedLabel.TextSize = 12; mixedLabel.Parent = container
 	end
+	if isLocked then
+		container.BackgroundTransparency = 0.5
+		container.BackgroundColor3 = Config.Theme.ButtonDisabled
+	end
+
 	local editor = GradientEditor.create(container, sequenceString, sequenceType)
 	table.insert(activeGradientEditors, editor) -- Track for cleanup
-	editor.SequenceChanged:Connect(function(newSequenceString) createMultiTrackUpdateAction(tracks, name, newSequenceString, historyManager) end)
+	if not isLocked then
+		editor.SequenceChanged:Connect(function(newSequenceString) createMultiTrackUpdateAction(tracks, name, newSequenceString, historyManager) end)
+	end
 end
 
 function PropertiesManager.populate(panel, selectedTracks, timelineManager)
@@ -200,6 +217,15 @@ function PropertiesManager.populate(panel, selectedTracks, timelineManager)
 	local tracks = {}
 	for track in pairs(selectedTracks) do table.insert(tracks, track) end
 	if #tracks == 0 then return end
+
+	-- A track is only considered "locked" for property editing if ALL selected tracks are locked.
+	local allLocked = true
+	for _, track in ipairs(tracks) do
+		if not track:GetAttribute("IsLocked") then
+			allLocked = false
+			break
+		end
+	end
 
 	local commonAttributes = {}
 	local firstTrackAttributes = tracks[1]:GetAttributes()
@@ -218,14 +244,15 @@ function PropertiesManager.populate(panel, selectedTracks, timelineManager)
 	if commonAttributes.Lane == MIXED_VALUE then commonAttributes.Lane = nil end
 
 	local layout = panel:FindFirstChildOfClass("UIListLayout") or Instance.new("UIListLayout", panel)
-	layout.Padding = UDim.new(0, 5); layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 8); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
 	local layoutOrderCounter = 1
 	for _, category in ipairs(PROPERTY_CATEGORIES) do
 		local hasAnyPropertyInCategory = false
 		for _, name in ipairs(category.Properties) do if commonAttributes[name] ~= nil then hasAnyPropertyInCategory = true; break end end
 		if hasAnyPropertyInCategory then
-			local header = Instance.new("TextLabel"); header.LayoutOrder = layoutOrderCounter; layoutOrderCounter += 1; header.Size = UDim2.new(1, -10, 0, 20); header.Text = " " .. category.Name .. " "; header.BackgroundColor3 = Color3.fromRGB(40,40,40); header.TextColor3 = Color3.fromRGB(200,200,200); header.Font = Enum.Font.SourceSansBold; header.TextXAlignment = Enum.TextXAlignment.Left; header.Parent = panel
+			local header = Instance.new("TextLabel"); header.LayoutOrder = layoutOrderCounter; layoutOrderCounter += 1; header.Size = UDim2.new(1, 0, 0, 22); header.Text = "  " .. category.Name; header.BackgroundColor3 = Config.Theme.TopBar:Lerp(Color3.new(0,0,0), 0.2); header.TextColor3 = Config.Theme.Text; header.Font = Enum.Font.SourceSansBold; header.TextXAlignment = Enum.TextXAlignment.Left; header.Parent = panel
+			local headerPadding = Instance.new("UIPadding"); headerPadding.PaddingTop = UDim.new(0, 4); headerPadding.Parent = header
 			for _, name in ipairs(category.Properties) do
 				if commonAttributes[name] == nil then continue end
 				local value = commonAttributes[name]
@@ -236,17 +263,20 @@ function PropertiesManager.populate(panel, selectedTracks, timelineManager)
 				local propFrame = createPropertyUI(panel, name, layoutOrderCounter, isNumSequence or isColorSequence); layoutOrderCounter += 1
 				local dataType = PROPERTY_TYPES[name] or typeof(firstValue)
 
-				if isColorSequence then createSequenceInput(propFrame, name, value, tracks, timelineManager.historyManager, "Color")
-				elseif dataType == "NumberSequence" then createSequenceInput(propFrame, name, value, tracks, timelineManager.historyManager, "Number")
-				elseif dataType == "Color3" then createColor3Input(propFrame, name, value, tracks, timelineManager.historyManager)
-				elseif dataType == "Vector3" then createVector3Input(propFrame, name, value, tracks, timelineManager.historyManager)
-				elseif dataType == "Enum" then createEnumDropdown(propFrame, name, value, tracks, timelineManager.historyManager)
-				elseif dataType == "NumberRange" then createNumberRangeInput(propFrame, name, value, tracks, timelineManager.historyManager)
-				else createGenericInput(propFrame, name, value, tracks, timelineManager.historyManager) end
+				-- The IsLocked property should ALWAYS be editable.
+				local isPropertyLocked = allLocked and (name ~= "IsLocked")
+
+				if isColorSequence then createSequenceInput(propFrame, name, value, tracks, timelineManager.historyManager, "Color", isPropertyLocked)
+				elseif dataType == "NumberSequence" then createSequenceInput(propFrame, name, value, tracks, timelineManager.historyManager, "Number", isPropertyLocked)
+				elseif dataType == "Color3" then createColor3Input(propFrame, name, value, tracks, timelineManager.historyManager, isPropertyLocked)
+				elseif dataType == "Vector3" then createVector3Input(propFrame, name, value, tracks, timelineManager.historyManager, isPropertyLocked)
+				elseif dataType == "Enum" then createEnumDropdown(propFrame, name, value, tracks, timelineManager.historyManager, isPropertyLocked)
+				elseif dataType == "NumberRange" then createNumberRangeInput(propFrame, name, value, tracks, timelineManager.historyManager, isPropertyLocked)
+				else createGenericInput(propFrame, name, value, tracks, timelineManager.historyManager, isPropertyLocked) end
 			end
 		end
 	end
-	local deleteButton = Instance.new("TextButton"); deleteButton.Name = "DeleteTrackButton"; deleteButton.LayoutOrder = layoutOrderCounter; deleteButton.Size = UDim2.new(1, -10, 0, 30); deleteButton.Text = "Delete " .. #tracks .. " Tracks"; deleteButton.BackgroundColor3 = Color3.fromRGB(180, 40, 40); deleteButton.TextColor3 = Color3.fromRGB(255, 255, 255); deleteButton.Parent = panel
+	local deleteButton = Instance.new("TextButton"); deleteButton.Name = "DeleteTrackButton"; deleteButton.LayoutOrder = layoutOrderCounter; deleteButton.Size = UDim2.new(1, 0, 0, 30); deleteButton.Text = "Delete Tracks"; deleteButton.BackgroundColor3 = Config.Theme.AccentDestructive; deleteButton.TextColor3 = Color3.fromRGB(255, 255, 255); deleteButton.Parent = panel
 	deleteButton.MouseButton1Click:Connect(function() timelineManager:deleteSelectedTracks() end)
 	task.wait(); panel.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
 end
