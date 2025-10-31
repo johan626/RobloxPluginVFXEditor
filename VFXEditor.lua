@@ -10,17 +10,16 @@ end
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Selection = game:GetService("Selection")
 local UserInputService = game:GetService("UserInputService")
-local ServerScriptService = game:GetService("ServerScriptService")
 
 -- Load Modules
-local UIManager = require(ServerScriptService.VFXEditorPlugin.UIManager)
-local TimelineManager = require(ServerScriptService.VFXEditorPlugin.TimelineManager)
-local PropertiesManager = require(ServerScriptService.VFXEditorPlugin.PropertiesManager)
-local PreviewManager = require(ServerScriptService.VFXEditorPlugin.PreviewManager)
-local Exporter = require(ServerScriptService.VFXEditorPlugin.Exporter)
-local DataManager = require(ServerScriptService.VFXEditorPlugin.DataManager)
-local HistoryManager = require(ServerScriptService.VFXEditorPlugin.HistoryManager)
-local Config = require(ServerScriptService.VFXEditorPlugin.Config)
+local UIManager = require(script.VFXEditorPlugin.UIManager)
+local TimelineManager = require(script.VFXEditorPlugin.TimelineManager)
+local PropertiesManager = require(script.VFXEditorPlugin.PropertiesManager)
+local PreviewManager = require(script.VFXEditorPlugin.PreviewManager)
+local Exporter = require(script.VFXEditorPlugin.Exporter)
+local DataManager = require(script.VFXEditorPlugin.DataManager)
+local HistoryManager = require(script.VFXEditorPlugin.HistoryManager)
+local Config = require(script.VFXEditorPlugin.Config)
 
 -- Plugin Initialization
 local toolbar = plugin:CreateToolbar("VFX Editor")
@@ -38,19 +37,10 @@ local previewManager = PreviewManager.new(ui)
 local timelineManager = TimelineManager.new(ui, previewManager.playhead, historyManager) -- Pass the playhead UI object, not the manager
 previewManager:setTimelineManager(timelineManager) -- Now inject the dependency
 
-local dataManager = DataManager.new(plugin, timelineManager)
+local dataManager = DataManager.new(plugin, timelineManager, ui) -- Pass UI to DataManager
 
--- State for confirmation dialog
-local onConfirmAction = nil
-
--- Function to show the confirmation dialog
-local function showConfirmation(title, message, onConfirm)
-	ui.DialogTitle.Text = title
-	ui.DialogMessage.Text = message
-	onConfirmAction = onConfirm
-	ui.ConfirmationDialog.Visible = true
-	ui.ConfirmButton.BackgroundColor3 = (title == "Confirm Reset") and Config.Theme.AccentDestructive or Config.Theme.Accent
-end
+-- Connection tracking for global inputs
+local userInputConnection = nil
 
 -- Function to update Undo/Redo button states
 local function updateHistoryButtons()
@@ -78,6 +68,7 @@ timelineManager.TrackDeleted:Connect(function()
 	PropertiesManager.clear(ui.PropertiesPanel)
 end)
 
+-- From right-click context menu
 ui.CreateTrackRequested:Connect(function(componentType)
 	local trackData = {
 		ComponentType = componentType,
@@ -88,6 +79,21 @@ ui.CreateTrackRequested:Connect(function(componentType)
 	timelineManager:createTracks({trackData})
 end)
 
+-- From top bar "Add Track" button
+ui.AddTrackAtPlayheadRequested:Connect(function(componentType)
+	local zoomedPixelsPerSecond = timelineManager.PIXELS_PER_SECOND * timelineManager.zoom
+	local playheadTime = timelineManager.playhead.Position.X.Offset / zoomedPixelsPerSecond
+
+	local trackData = {
+		ComponentType = componentType,
+		StartTime = playheadTime,
+		Duration = 1
+	}
+	timelineManager:addDefaultAttributes(trackData)
+	timelineManager:createTracks({trackData})
+end)
+
+
 ui.CreatePresetTrackRequested:Connect(function(presetName)
 	local zoomedPixelsPerSecond = timelineManager.PIXELS_PER_SECOND * timelineManager.zoom
 	local playheadTime = timelineManager.playhead.Position.X.Offset / zoomedPixelsPerSecond
@@ -97,6 +103,12 @@ end)
 -- Top Bar Button Connections
 ui.UndoButton.MouseButton1Click:Connect(function() historyManager:undo() end)
 ui.RedoButton.MouseButton1Click:Connect(function() historyManager:redo() end)
+
+ui.AddTrackButton.MouseButton1Click:Connect(function()
+	local menu = ui.CreateTrackSubMenu
+	menu.Position = UDim2.new(0, ui.AddTrackButton.AbsolutePosition.X, 0, ui.AddTrackButton.AbsolutePosition.Y + ui.AddTrackButton.AbsoluteSize.Y)
+	menu.Visible = not menu.Visible
+end)
 
 ui.CreateVFXButton.MouseButton1Click:Connect(function()
 	local vfxContainer = Instance.new("Folder"); vfxContainer.Name = "NewVFX"
@@ -120,24 +132,23 @@ ui.SaveButton.MouseButton1Click:Connect(function()
 end)
 
 ui.LoadButton.MouseButton1Click:Connect(function()
-	showConfirmation("Confirm Load", "Are you sure you want to load the saved project? Any unsaved changes will be lost.", function()
-		local tracksData = dataManager:loadTimeline()
-		if tracksData then timelineManager:clearTimeline(); for _, trackData in ipairs(tracksData) do timelineManager:_createTrackUI(trackData) end end
+	dataManager:loadTimeline(function(tracksData)
+		if tracksData then
+			timelineManager:clearTimeline()
+			for _, trackData in ipairs(tracksData) do
+				-- This is a private method, but it's the only way to bypass history for loading
+				timelineManager:_createTrackUI(trackData)
+			end
+		end
 	end)
 end)
 
-ui.ResetButton.MouseButton1Click:Connect(function()
-	showConfirmation("Confirm Reset", "Are you sure you want to reset the entire timeline? This cannot be undone.", function()
-		timelineManager:clearTimeline()
-	end)
-end)
+-- The ClearAll button logic is now inside TimelineManager's connectEvents
 
-ui.ConfirmButton.MouseButton1Click:Connect(function() if onConfirmAction then onConfirmAction() end; ui.ConfirmationDialog.Visible = false; onConfirmAction = nil end)
-ui.CancelButton.MouseButton1Click:Connect(function() ui.ConfirmationDialog.Visible = false; onConfirmAction = nil end)
+-- Keyboard Shortcuts Handler
+local function onInputBegan(input, gameProcessedEvent)
+	if not vfxEditorWidget.Enabled or gameProcessedEvent then return end
 
--- Keyboard Shortcuts
-UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
-	if gameProcessedEvent then return end
 	local isCtrlDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
 	if isCtrlDown then
 		if input.KeyCode == Enum.KeyCode.Z then historyManager:undo()
@@ -149,14 +160,33 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 			timelineManager:pasteTracksAtTime(playheadTime)
 		end
 	end
-end)
+end
 
 -- Check for existing data on startup
 if dataManager:hasSavedData() then
 	ui.LoadButton.Active = true; ui.LoadButton.AutoButtonColor = true; ui.LoadButton.BackgroundColor3 = Config.Theme.Button; ui.LoadButton.TextColor3 = Config.Theme.Text
 end
 
--- Toggle Widget Visibility
+-- Toggle Widget Visibility and connect/disconnect global inputs
+vfxEditorWidget:GetPropertyChangedSignal("Enabled"):Connect(function()
+	if vfxEditorWidget.Enabled then
+		if not userInputConnection then
+			userInputConnection = UserInputService.InputBegan:Connect(onInputBegan)
+		end
+	else
+		if userInputConnection then
+			userInputConnection:Disconnect()
+			userInputConnection = nil
+		end
+	end
+end)
+
+-- Initial connection if widget is already enabled
+if vfxEditorWidget.Enabled then
+	userInputConnection = UserInputService.InputBegan:Connect(onInputBegan)
+end
+
+
 newScriptButton.Click:Connect(function() vfxEditorWidget.Enabled = not vfxEditorWidget.Enabled end)
 
 print("VFX Editor Plugin (Modular with History) Loaded")
