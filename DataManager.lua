@@ -2,16 +2,18 @@
 -- Path: ServerScriptService/VFXEditor/DataManager.lua
 -- Handles saving and loading timeline data.
 
+local UIManager = require(script.Parent.UIManager)
 local DataManager = {}
 DataManager.__index = DataManager
 
 -- Key for storing plugin data
 local STORAGE_KEY = "VFXEditor_TimelineData"
 
-function DataManager.new(plugin, timelineManager)
+function DataManager.new(plugin, timelineManager, ui)
 	local self = setmetatable({}, DataManager)
 	self.plugin = plugin
 	self.timelineManager = timelineManager
+	self.ui = ui
 	return self
 end
 
@@ -52,31 +54,35 @@ function DataManager:saveTimeline()
 end
 
 --[[
-	Deserializes timeline data from plugin settings and returns it.
-	The main script will then use this data to clear and repopulate the timeline.
+	Shows a confirmation dialog before loading. If confirmed, deserializes timeline data 
+	from plugin settings and passes it to the onLoaded callback.
 ]]
-function DataManager:loadTimeline()
-	local encodedData = self.plugin:GetSetting(STORAGE_KEY)
-	if not encodedData or encodedData == "" then
-		print("No saved VFX data found.")
-		return nil
-	end
+function DataManager:loadTimeline(onLoaded)
+	UIManager.showConfirmationDialog(
+		self.ui,
+		"Load Project",
+		"Are you sure you want to load a project? Any unsaved changes will be lost.",
+		function()
+			local encodedData = self.plugin:GetSetting(STORAGE_KEY)
+			if not encodedData or encodedData == "" then
+				print("No saved VFX data found.")
+				return
+			end
 
-	local HttpService = game:GetService("HttpService")
-	local success, tracksData = pcall(function()
-		return HttpService:JSONDecode(encodedData)
-	end)
+			local HttpService = game:GetService("HttpService")
+			local success, tracksData = pcall(function()
+				return HttpService:JSONDecode(encodedData)
+			end)
 
-	if success then
-		print("VFX Timeline Loaded!")
-		return tracksData
-	else
-		warn("Failed to decode timeline data:", tracksData)
-		-- This might happen if the saved data is corrupted or in an old format.
-		-- Clearing the corrupted setting to prevent future errors.
-		self.plugin:SetSetting(STORAGE_KEY, nil)
-		return nil
-	end
+			if success then
+				print("VFX Timeline Loaded!")
+				if onLoaded then onLoaded(tracksData) end
+			else
+				warn("Failed to decode timeline data:", tracksData)
+				self.plugin:SetSetting(STORAGE_KEY, nil)
+			end
+		end
+	)
 end
 
 --[[
