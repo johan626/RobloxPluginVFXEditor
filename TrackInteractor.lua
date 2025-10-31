@@ -1,4 +1,5 @@
 -- TrackInteractor.lua (ModuleScript)
+-- Path: ServerScriptService/VFXEditor/TrackInteractor.lua
 -- Handles all user input and interaction with individual tracks on the timeline.
 
 local Config = require(script.Parent.Config)
