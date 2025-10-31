@@ -39,6 +39,10 @@ end
 -- Method to inject the TimelineManager after both are created
 function PreviewManager:setTimelineManager(timelineManager)
 	self.timelineManager = timelineManager
+	self.timelineManager.MuteSoloChanged:Connect(function()
+		-- When mute/solo state changes, refresh the preview immediately
+		self:updatePreviewAtTime(self.currentTime)
+	end)
 end
 
 -- The core function for real-time scrubbing and playback
@@ -61,9 +65,15 @@ function PreviewManager:updatePreviewAtTime(time)
 		previewPosition = Vector3.new(0, 5, 0)
 	end
 
+	local trackStates = self.timelineManager:getTrackStates()
 	local activeTracks = {}
 	for _, track in ipairs(self.timeline:GetChildren()) do
 		if track:IsA("TextButton") and track.Name == "TimelineTrack" then
+			local trackState = trackStates[track]
+			if not trackState or not trackState.IsVisible then
+				continue -- Skip muted/unsoloed tracks
+			end
+
 			local attributes = track:GetAttributes()
 
 			-- Sounds are handled entirely by _handleSounds during playback, not scrubbing.
@@ -125,7 +135,32 @@ function PreviewManager:_createPreviewInstance(track, previewPosition)
 		instance = beam
 	elseif componentType == "Particle" then
 		local attachment = Instance.new("Attachment")
-		local emitter = Instance.new("ParticleEmitter"); emitter.Parent = attachment
+		attachment.WorldPosition = previewPosition
+
+		local emitter = Instance.new("ParticleEmitter")
+		emitter.Enabled = attributes.Enabled
+		emitter.Rate = attributes.Rate
+		emitter.Lifetime = Utils.parseNumberRange(attributes.Lifetime)
+		emitter.Size = Utils.parseNumberSequence(attributes.Size)
+		emitter.Color = Utils.parseColorSequence(attributes.Color)
+		emitter.Texture = attributes.Texture
+		local spreadAngle = tostring(attributes.SpreadAngle):split(" ")
+		emitter.SpreadAngle = Vector2.new(tonumber(spreadAngle[1]) or 0, tonumber(spreadAngle[2]) or tonumber(spreadAngle[1]) or 0)
+		emitter.Acceleration = Utils.parseVector3(attributes.Acceleration)
+		emitter.Drag = attributes.Drag
+		emitter.EmissionDirection = Utils.parseEnum(Enum.NormalId, attributes.EmissionDirection) or Enum.NormalId.Top
+		emitter.LightEmission = attributes.LightEmission
+		emitter.LightInfluence = attributes.LightInfluence
+		emitter.Orientation = Utils.parseEnum(Enum.ParticleOrientation, attributes.Orientation) or Enum.ParticleOrientation.FacingCamera
+		emitter.RotSpeed = Utils.parseNumberRange(attributes.RotSpeed)
+		emitter.Rotation = Utils.parseNumberRange(attributes.Rotation)
+		emitter.Speed = Utils.parseNumberRange(attributes.Speed)
+		emitter.Squash = Utils.parseNumberSequence(attributes.Squash)
+		emitter.TimeScale = attributes.TimeScale
+		emitter.Transparency = Utils.parseNumberSequence(attributes.Transparency)
+		emitter.ZOffset = attributes.ZOffset
+		emitter.Parent = attachment
+
 		attachment.Parent = self.previewFolder
 		instance = attachment
 	elseif componentType == "Trail" then
@@ -182,32 +217,9 @@ function PreviewManager:_updateInstanceProperties(instance, attributes, timeInto
 		instance.Attachment0.WorldPosition = previewPosition + Utils.parseVector3(attributes.Attachment0Offset)
 		instance.Attachment1.WorldPosition = previewPosition + Utils.parseVector3(attributes.Attachment1Offset)
 	elseif componentType == "Particle" then
+		-- Properties are set on creation, only update position.
 		if not (instance:IsA("Attachment") and instance:FindFirstChildOfClass("ParticleEmitter")) then return end
-
 		instance.WorldPosition = previewPosition
-		local emitter = instance:FindFirstChildOfClass("ParticleEmitter")
-		emitter:Clear()
-		emitter.Enabled = attributes.Enabled
-		emitter.Lifetime = Utils.parseNumberRange("0.1 0.1")
-		emitter.Size = Utils.parseNumberSequence(attributes.Size)
-		emitter.Color = Utils.parseColorSequence(attributes.Color)
-		emitter.Texture = attributes.Texture
-		local spreadAngle = tostring(attributes.SpreadAngle):split(" ")
-		emitter.SpreadAngle = Vector2.new(tonumber(spreadAngle[1]) or 0, tonumber(spreadAngle[2]) or tonumber(spreadAngle[1]) or 0)
-		emitter.Acceleration = Utils.parseVector3(attributes.Acceleration)
-		emitter.Drag = attributes.Drag
-		emitter.EmissionDirection = Utils.parseEnum(Enum.NormalId, attributes.EmissionDirection) or Enum.NormalId.Top
-		emitter.LightEmission = attributes.LightEmission
-		emitter.LightInfluence = attributes.LightInfluence
-		emitter.Orientation = Utils.parseEnum(Enum.ParticleOrientation, attributes.Orientation) or Enum.ParticleOrientation.FacingCamera
-		emitter.RotSpeed = Utils.parseNumberRange(attributes.RotSpeed)
-		emitter.Rotation = Utils.parseNumberRange(attributes.Rotation)
-		emitter.Speed = Utils.parseNumberRange(attributes.Speed)
-		emitter.Squash = Utils.parseNumberSequence(attributes.Squash)
-		emitter.TimeScale = attributes.TimeScale
-		emitter.Transparency = Utils.parseNumberSequence(attributes.Transparency)
-		emitter.ZOffset = attributes.ZOffset
-		emitter:Emit(math.ceil(attributes.Rate * 0.1))
 
 	elseif componentType == "Trail" then
 		if not (instance:IsA("Part") and instance:FindFirstChildOfClass("Trail")) then return end
@@ -280,10 +292,15 @@ end
 
 function PreviewManager:_handleSounds(shouldPlay)
 	if not self.timelineManager then return end
+
+	local trackStates = self.timelineManager:getTrackStates()
+
 	for _, track in ipairs(self.timeline:GetChildren()) do
 		if track:IsA("TextButton") and track.Name == "TimelineTrack" and track:GetAttribute("ComponentType") == "Sound" then
 			local instance = self.previewInstances[track]
-			if shouldPlay then
+			local trackState = trackStates[track]
+
+			if shouldPlay and trackState and trackState.IsVisible then
 				local startTime = track:GetAttribute("StartTime")
 				if self.currentTime >= startTime and not instance then
 					local sound = Instance.new("Sound")
