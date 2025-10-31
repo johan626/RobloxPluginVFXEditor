@@ -57,6 +57,19 @@ local function createComponentButton(parent, name, yPos)
 	return ui
 end
 
+-- Fungsi bantuan untuk tombol preset
+local function createPresetButton(parent, name, yPos)
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.new(1, -10, 0, 25)
+	button.Position = UDim2.new(0.5, -button.Size.X.Offset/2, 0, yPos)
+	button.Text = "+ " .. name
+	button.Parent = parent
+	styleButton(button)
+	button.TextSize = 12
+	button.BackgroundColor3 = Color3.fromRGB(60,60,60)
+	return button
+end
+
 
 function UIManager.createUI(widget)
 	local ui = {}
@@ -66,6 +79,10 @@ function UIManager.createUI(widget)
 	ui.CreateTrackRequested = {}
 	function ui.CreateTrackRequested:Connect(callback) table.insert(self, callback) end
 	function ui.CreateTrackRequested:Fire(...) for _, cb in ipairs(self) do cb(...) end end
+
+	ui.CreatePresetTrackRequested = {}
+	function ui.CreatePresetTrackRequested:Connect(callback) table.insert(self, callback) end
+	function ui.CreatePresetTrackRequested:Fire(...) for _, cb in ipairs(self) do cb(...) end end
 
 	ui.GroupColorChanged = {}
 	function ui.GroupColorChanged:Connect(callback) table.insert(self, callback) end
@@ -214,13 +231,27 @@ function UIManager.createUI(widget)
 	local padding = Instance.new("UIPadding"); padding.PaddingTop = UDim.new(0, 5); padding.PaddingLeft = UDim.new(0, 5); padding.Parent = ui.PropertiesPanel
 	ui.Timeline = Instance.new("ScrollingFrame")
 	ui.Timeline.Name = "Timeline"; ui.Timeline.Size = UDim2.new(0.7, 0, 1, 0); ui.Timeline.Position = UDim2.new(0.15, 0, 0, 0); ui.Timeline.BackgroundColor3 = theme.Timeline; ui.Timeline.CanvasSize = UDim2.new(5, 0, 1, 0); ui.Timeline.ScrollBarThickness = 6; ui.Timeline.Parent = contentArea
-	ui.LightButtons = createComponentButton(ui.ComponentLibrary, "Light", 10)
-	ui.SoundButtons = createComponentButton(ui.ComponentLibrary, "Sound", 50)
-	ui.ParticleButtons = createComponentButton(ui.ComponentLibrary, "Particle", 90)
-	ui.SpotLightButtons = createComponentButton(ui.ComponentLibrary, "SpotLight", 130)
-	ui.SurfaceLightButtons = createComponentButton(ui.ComponentLibrary, "SurfaceLight", 170)
-	ui.BeamButtons = createComponentButton(ui.ComponentLibrary, "Beam", 210)
-	ui.TrailButtons = createComponentButton(ui.ComponentLibrary, "Trail", 250)
+
+	-- Create Component and Preset Buttons
+	local yOffset = 10
+	ui.LightButtons = createComponentButton(ui.ComponentLibrary, "Light", yOffset); yOffset += 40
+	ui.SoundButtons = createComponentButton(ui.ComponentLibrary, "Sound", yOffset); yOffset += 40
+	ui.ParticleButtons = createComponentButton(ui.ComponentLibrary, "Particle", yOffset); yOffset += 40
+
+	ui.FirePresetButton = createPresetButton(ui.ComponentLibrary, "Fire", yOffset); yOffset += 30
+	ui.SmokePresetButton = createPresetButton(ui.ComponentLibrary, "Smoke", yOffset); yOffset += 30
+	ui.ExplosionPresetButton = createPresetButton(ui.ComponentLibrary, "Explosion", yOffset); yOffset += 40 -- Extra padding
+
+	ui.SpotLightButtons = createComponentButton(ui.ComponentLibrary, "SpotLight", yOffset); yOffset += 40
+	ui.SurfaceLightButtons = createComponentButton(ui.ComponentLibrary, "SurfaceLight", yOffset); yOffset += 40
+	ui.BeamButtons = createComponentButton(ui.ComponentLibrary, "Beam", yOffset); yOffset += 40
+	ui.TrailButtons = createComponentButton(ui.ComponentLibrary, "Trail", yOffset); yOffset += 40
+
+	-- Connect Preset Buttons to the new signal
+	ui.FirePresetButton.MouseButton1Click:Connect(function() ui.CreatePresetTrackRequested:Fire("Fire") end)
+	ui.SmokePresetButton.MouseButton1Click:Connect(function() ui.CreatePresetTrackRequested:Fire("Smoke") end)
+	ui.ExplosionPresetButton.MouseButton1Click:Connect(function() ui.CreatePresetTrackRequested:Fire("Explosion") end)
+
 	ui.ConfirmationDialog = Instance.new("Frame")
 	ui.ConfirmationDialog.Name = "ConfirmationDialog"; ui.ConfirmationDialog.Size = UDim2.new(1, 0, 1, 0); ui.ConfirmationDialog.Position = UDim2.new(0, 0, 0, 0); ui.ConfirmationDialog.BackgroundColor3 = Color3.fromRGB(0, 0, 0); ui.ConfirmationDialog.BackgroundTransparency = 0.5; ui.ConfirmationDialog.Visible = false; ui.ConfirmationDialog.ZIndex = 10; ui.ConfirmationDialog.Parent = ui.MainFrame
 	local dialog = Instance.new("Frame"); dialog.Name = "Dialog"; dialog.Size = UDim2.new(0, 400, 0, 150); dialog.Position = UDim2.new(0.5, -200, 0.5, -75); dialog.BackgroundColor3 = Color3.fromRGB(50, 50, 50); dialog.Parent = ui.ConfirmationDialog
