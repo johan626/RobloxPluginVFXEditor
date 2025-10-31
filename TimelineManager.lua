@@ -4,6 +4,47 @@
 local Config = require(script.Parent.Config)
 local UserInputService = game:GetService("UserInputService")
 
+local ParticlePresets = {
+	Fire = {
+		TrackLabel = "Fire",
+		Texture = "rbxasset://textures/particles/fire_sparks_main.dds",
+		Color = "0,1,1,1;0.5,1,0.5,0;1,0.5,0,0",
+		Size = "0,0;0.25,1;1,0",
+		Lifetime = "0.5 1",
+		Rotation = "0 360",
+		RotSpeed = "-180 180",
+		Speed = "2 4",
+		Acceleration = "0,5,0",
+		LightEmission = 1
+	},
+	Smoke = {
+		TrackLabel = "Smoke",
+		Texture = "rbxassetid://160492415", -- A common smoke texture
+		Color = "0,0.8,0.8,0.8;1,0.1,0.1,0.1",
+		Transparency = "0,0.8;0.5,0.2;1,0.9",
+		Size = "0,0;0.5,2;1,5",
+		Lifetime = "3 5",
+		Rotation = "0 360",
+		RotSpeed = "-20 20",
+		Speed = "1 2",
+		Acceleration = "0,2,0",
+		Drag = 0.1
+	},
+	Explosion = {
+		TrackLabel = "Explosion",
+		Texture = "rbxassetid://287992173", -- Spark/burst texture
+		Color = "0,1,1,1;0.1,1,0.8,0;0.8,1,0.2,0;1,0.5,0.5,0.5",
+		Transparency = "0,0;0.5,0.5;1,1",
+		Size = "0,0;0.1,5;1,10",
+		Lifetime = "0.3 0.6",
+		Speed = "25 40",
+		SpreadAngle = "360 360",
+		Drag = 5,
+		LightEmission = 1,
+		Rate = 500 -- Emit a large burst
+	}
+}
+
 local TimelineManager = {}
 TimelineManager.__index = TimelineManager
 
@@ -345,6 +386,40 @@ function TimelineManager:addDefaultAttributes(trackData)
 	elseif c == 'Sound' then trackData.SoundId="rbxassetid://"; trackData.Volume=0.5; trackData.PlaybackSpeed=1; trackData.TimePosition=0; trackData.Looped=false; trackData.RollOffMode="Inverse"; trackData.RollOffMinDistance=10; trackData.RollOffMaxDistance=100
 	elseif c == 'Particle' then trackData.Enabled=true; trackData.Rate=20; trackData.Lifetime="1 2"; trackData.Size="0,1;1,0"; trackData.Color="0,1,1,1;1,1,1,1"; trackData.SpreadAngle="360 360"; trackData.Texture="rbxasset://textures/particles/sparkles_main.dds"; trackData.Rotation="0 360"; trackData.Speed="5 10"; trackData.Acceleration="0,0,0"; trackData.Drag=0; trackData.EmissionDirection="Top"; trackData.LightEmission=0; trackData.LightInfluence=1; trackData.Orientation="FacingCamera"; trackData.RotSpeed="0 0"; trackData.Squash="0,0;1,0"; trackData.TimeScale=1; trackData.Transparency="0,0;1,0"; trackData.ZOffset=0 end
 end
+
+function TimelineManager:addPresetAttributes(trackData, presetName)
+	local preset = ParticlePresets[presetName]
+	if not preset then return end
+
+	-- Override default particle attributes with preset values
+	for key, value in pairs(preset) do
+		trackData[key] = value
+	end
+end
+
+-- PUBLIC, HISTORY-LOGGED ACTION: Create a track from a preset
+function TimelineManager:createTrackFromPreset(presetName, time)
+	local preset = ParticlePresets[presetName]
+	if not preset then
+		warn("Unknown preset:", presetName)
+		return
+	end
+
+	-- 1. Start with default particle attributes
+	local trackData = {
+		ComponentType = "Particle",
+		StartTime = time,
+		Duration = 2 -- Default duration for presets
+	}
+	self:addDefaultAttributes(trackData)
+
+	-- 2. Override with preset attributes
+	self:addPresetAttributes(trackData, presetName)
+
+	-- 3. Create the track using the standard, history-logged method
+	self:createTracks({trackData})
+end
+
 
 function TimelineManager:makeTrackInteractive(track)
 	local outline = Instance.new("UIStroke"); outline.Name = "SelectionOutline"; outline.Color = Color3.fromRGB(255, 255, 0); outline.Thickness = 2; outline.Enabled = false; outline.Parent = track
