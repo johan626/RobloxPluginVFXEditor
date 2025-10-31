@@ -519,13 +519,11 @@ function TimelineManager:showContextMenu(mouseX, mouseY, options)
 	local y = math.min(mouseY, viewportSize.Y - menuSize.Y)
 	menu.Position = UDim2.new(0, x, 0, y)
 
-	menu.CreateTrackButton.Visible = options.showCreate or false
 	menu.CopyButton.Visible = options.showCopy or false
 	menu.PasteButton.Visible = options.showPaste or false
 
 	-- Auto-adjust height based on visible buttons
 	local visibleButtons = 0
-	if menu.CreateTrackButton.Visible then visibleButtons = visibleButtons + 1 end
 	if menu.CopyButton.Visible then visibleButtons = visibleButtons + 1 end
 	if menu.PasteButton.Visible then visibleButtons = visibleButtons + 1 end
 	menu.Size = UDim2.new(0, 150, 0, visibleButtons * 30 + 4)
@@ -653,7 +651,7 @@ function TimelineManager:connectEvents()
 				self.ghostTrack = Instance.new("Frame"); self.ghostTrack.Size = UDim2.new(0, 0, 0, self.TRACK_HEIGHT); self.ghostTrack.Position = UDim2.new(0, self.startMouseX, 0, 50); self.ghostTrack.BackgroundColor3 = Color3.fromRGB(100, 150, 255); self.ghostTrack.BackgroundTransparency = 0.5; self.ghostTrack.Parent = self.timeline
 			elseif input.UserInputType == Enum.UserInputType.MouseButton2 then -- Right-click for context menu
 				local mouseX, mouseY = input.Position.X, input.Position.Y
-				self:showContextMenu(mouseX, mouseY, {showCreate = true, showPaste = self.copiedTracksData ~= nil})
+				self:showContextMenu(mouseX, mouseY, {showPaste = self.copiedTracksData ~= nil})
 				local relativeMouseX = input.Position.X - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
 				self.pasteTime = relativeMouseX / (self.PIXELS_PER_SECOND * self.zoom)
 			end

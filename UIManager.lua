@@ -8,7 +8,7 @@ local UIManager = {}
 local function styleButton(button, isEnabled)
 	if isEnabled == nil then isEnabled = true end
 	local theme = Config.Theme
-	
+
 	button.Font = theme.Font
 	button.TextSize = theme.FontSize
 	local corner = Instance.new("UICorner")
@@ -35,18 +35,6 @@ function UIManager.createUI(widget)
 	local theme = Config.Theme
 
 	-- Signals
-	ui.CreateTrackRequested = {}
-	function ui.CreateTrackRequested:Connect(callback) table.insert(self, callback) end
-	function ui.CreateTrackRequested:Fire(...) for _, cb in ipairs(self) do cb(...) end end
-
-	ui.AddTrackAtPlayheadRequested = {}
-	function ui.AddTrackAtPlayheadRequested:Connect(callback) table.insert(self, callback) end
-	function ui.AddTrackAtPlayheadRequested:Fire(...) for _, cb in ipairs(self) do cb(...) end end
-
-	ui.CreatePresetTrackRequested = {}
-	function ui.CreatePresetTrackRequested:Connect(callback) table.insert(self, callback) end
-	function ui.CreatePresetTrackRequested:Fire(...) for _, cb in ipairs(self) do cb(...) end end
-
 	ui.GroupColorChanged = {}
 	function ui.GroupColorChanged:Connect(callback) table.insert(self, callback) end
 	function ui.GroupColorChanged:Fire(...) for _, cb in ipairs(self) do cb(...) end end
@@ -103,7 +91,7 @@ function UIManager.createUI(widget)
 	centerLayout.VerticalAlignment = Enum.VerticalAlignment.Center
 	centerLayout.Padding = UDim.new(0, 6)
 	centerLayout.Parent = centerFrame
-	
+
 	-- Right Aligned Buttons Container
 	local rightFrame = Instance.new("Frame")
 	rightFrame.Name = "RightFrame"
@@ -120,7 +108,7 @@ function UIManager.createUI(widget)
 
 	-- Shared Button Size
 	local BTN_HEIGHT = 28
-	
+
 	-- Undo/Redo Buttons (Left Frame)
 	ui.UndoButton = Instance.new("TextButton")
 	ui.UndoButton.Name = "UndoButton"; ui.UndoButton.Size = UDim2.new(0, 60, 0, BTN_HEIGHT); ui.UndoButton.Text = "Undo"; ui.UndoButton.Parent = leftFrame
@@ -133,10 +121,6 @@ function UIManager.createUI(widget)
 	ui.CreateVFXButton = Instance.new("TextButton")
 	ui.CreateVFXButton.Name = "CreateNewVFXButton"; ui.CreateVFXButton.Size = UDim2.new(0, 120, 0, BTN_HEIGHT); ui.CreateVFXButton.Text = "Create New VFX"; ui.CreateVFXButton.Parent = leftFrame
 	styleButton(ui.CreateVFXButton)
-
-	ui.AddTrackButton = Instance.new("TextButton")
-	ui.AddTrackButton.Name = "AddTrackButton"; ui.AddTrackButton.Size = UDim2.new(0, 90, 0, BTN_HEIGHT); ui.AddTrackButton.Text = "Add Track"; ui.AddTrackButton.Parent = leftFrame
-	styleButton(ui.AddTrackButton)
 
 	-- Play/Stop Buttons (Center Frame)
 	ui.PlayButton = Instance.new("TextButton")
@@ -168,12 +152,52 @@ function UIManager.createUI(widget)
 	local contentArea = Instance.new("Frame")
 	contentArea.Name = "ContentArea"; contentArea.Size = UDim2.new(1, 0, 1, -36); contentArea.Position = UDim2.new(0, 0, 0, 36); contentArea.Parent = ui.MainFrame
 
+	-- New Component Library Panel (Left)
+	ui.ComponentLibrary = Instance.new("ScrollingFrame")
+	ui.ComponentLibrary.Name = "ComponentLibrary"; ui.ComponentLibrary.Size = UDim2.new(0.15, 0, 1, 0); ui.ComponentLibrary.Position = UDim2.new(0, 0, 0, 0); ui.ComponentLibrary.BackgroundColor3 = theme.ComponentLibrary; ui.ComponentLibrary.BorderSizePixel = 0; ui.ComponentLibrary.ScrollBarThickness = 8; ui.ComponentLibrary.ScrollBarImageColor3 = theme.ButtonAccent; ui.ComponentLibrary.Parent = contentArea
+	local libPadding = Instance.new("UIPadding"); libPadding.PaddingLeft = UDim.new(0, 8); libPadding.PaddingRight = UDim.new(0, 8); libPadding.PaddingTop = UDim.new(0, 8); libPadding.PaddingBottom = UDim.new(0, 8); libPadding.Parent = ui.ComponentLibrary
+	local libLayout = Instance.new("UIListLayout"); libLayout.Padding = UDim.new(0, 5); libLayout.SortOrder = Enum.SortOrder.LayoutOrder; libLayout.Parent = ui.ComponentLibrary
+
+	-- Timeline Panel (Center)
+	ui.Timeline = Instance.new("ScrollingFrame")
+	ui.Timeline.Name = "Timeline"; ui.Timeline.Size = UDim2.new(0.65, 0, 1, 0); ui.Timeline.Position = UDim2.new(0.15, 0, 0, 0); ui.Timeline.BackgroundColor3 = theme.Timeline; ui.Timeline.CanvasSize = UDim2.new(5, 0, 1, 0); ui.Timeline.ScrollBarThickness = 8; ui.Timeline.Parent = contentArea
+
+	-- Properties Panel (Right)
 	ui.PropertiesPanel = Instance.new("ScrollingFrame")
 	ui.PropertiesPanel.Name = "PropertiesPanel"; ui.PropertiesPanel.Size = UDim2.new(0.2, 0, 1, 0); ui.PropertiesPanel.Position = UDim2.new(0.8, 0, 0, 0); ui.PropertiesPanel.BackgroundColor3 = theme.Properties; ui.PropertiesPanel.BorderSizePixel = 0; ui.PropertiesPanel.ScrollBarThickness = 8; ui.PropertiesPanel.ScrollBarImageColor3 = theme.ButtonAccent; ui.PropertiesPanel.Parent = contentArea
 	local propsPadding = Instance.new("UIPadding"); propsPadding.PaddingLeft = UDim.new(0, 8); propsPadding.PaddingRight = UDim.new(0, 8); propsPadding.PaddingTop = UDim.new(0, 8); propsPadding.PaddingBottom = UDim.new(0, 8); propsPadding.Parent = ui.PropertiesPanel
 
-	ui.Timeline = Instance.new("ScrollingFrame")
-	ui.Timeline.Name = "Timeline"; ui.Timeline.Size = UDim2.new(0.8, 0, 1, 0); ui.Timeline.Position = UDim2.new(0, 0, 0, 0); ui.Timeline.BackgroundColor3 = theme.Timeline; ui.Timeline.CanvasSize = UDim2.new(5, 0, 1, 0); ui.Timeline.ScrollBarThickness = 8; ui.Timeline.Parent = contentArea
+	-- Populate Component Library
+	local componentCategories = {
+		{Name = "Lights", Items = {"Light", "SpotLight", "SurfaceLight"}},
+		{Name = "Emitters", Items = {"Particle", "Beam", "Trail"}},
+		{Name = "Audio", Items = {"Sound"}},
+		{Name = "Presets", Items = {"Fire", "Smoke", "Explosion"}, Preset = true}
+	}
+
+	for _, category in ipairs(componentCategories) do
+		local header = Instance.new("TextLabel")
+		header.LayoutOrder = #ui.ComponentLibrary:GetChildren()
+		header.Size = UDim2.new(1, 0, 0, 20)
+		header.Text = category.Name
+		header.BackgroundColor3 = theme.ButtonAccent
+		header.TextColor3 = theme.Text
+		header.Font = Enum.Font.SourceSansBold
+		header.TextXAlignment = Enum.TextXAlignment.Left
+		header.Parent = ui.ComponentLibrary
+
+		for _, itemName in ipairs(category.Items) do
+			local button = Instance.new("TextButton")
+			button.Name = "ComponentDraggable"
+			button.LayoutOrder = #ui.ComponentLibrary:GetChildren()
+			button.Size = UDim2.new(1, 0, 0, 28)
+			button.Text = "  " .. itemName
+			button:SetAttribute("ComponentType", itemName)
+			button:SetAttribute("IsPreset", category.Preset or false)
+			button.Parent = ui.ComponentLibrary
+			styleButton(button)
+		end
+	end
 
 	ui.ConfirmationDialog = Instance.new("Frame")
 	ui.ConfirmationDialog.Name = "ConfirmationDialog"; ui.ConfirmationDialog.Size = UDim2.new(1, 0, 1, 0); ui.ConfirmationDialog.Position = UDim2.new(0, 0, 0, 0); ui.ConfirmationDialog.BackgroundColor3 = Color3.fromRGB(0, 0, 0); ui.ConfirmationDialog.BackgroundTransparency = 0.5; ui.ConfirmationDialog.Visible = false; ui.ConfirmationDialog.ZIndex = 10; ui.ConfirmationDialog.Parent = ui.MainFrame
@@ -190,66 +214,9 @@ function UIManager.createUI(widget)
 	local contextLayout = Instance.new("UIListLayout"); contextLayout.Padding = UDim.new(0, 4); contextLayout.SortOrder = Enum.SortOrder.LayoutOrder; contextLayout.Parent = ui.ContextMenu
 	local contextPadding = Instance.new("UIPadding"); contextPadding.PaddingLeft = UDim.new(0, 4); contextPadding.PaddingRight = UDim.new(0, 4); contextPadding.PaddingTop = UDim.new(0, 4); contextPadding.PaddingBottom = UDim.new(0, 4); contextPadding.Parent = ui.ContextMenu
 
-	ui.CreateTrackButton = Instance.new("TextButton"); ui.CreateTrackButton.Name = "CreateTrackButton"; ui.CreateTrackButton.LayoutOrder = 1; ui.CreateTrackButton.Size = UDim2.new(1, 0, 0, 28); ui.CreateTrackButton.Text = "Create New  >"; ui.CreateTrackButton.Parent = ui.ContextMenu; styleButton(ui.CreateTrackButton)
-	ui.CopyButton = Instance.new("TextButton"); ui.CopyButton.Name = "CopyButton"; ui.CopyButton.LayoutOrder = 2; ui.CopyButton.Size = UDim2.new(1, 0, 0, 28); ui.CopyButton.Text = "Copy"; ui.CopyButton.Parent = ui.ContextMenu; styleButton(ui.CopyButton)
-	ui.PasteButton = Instance.new("TextButton"); ui.PasteButton.Name = "PasteButton"; ui.PasteButton.LayoutOrder = 3; ui.PasteButton.Size = UDim2.new(1, 0, 0, 28); ui.PasteButton.Text = "Paste"; ui.PasteButton.Parent = ui.ContextMenu; styleButton(ui.PasteButton)
-	ui.SetGroupColorButton = Instance.new("TextButton"); ui.SetGroupColorButton.Name = "SetGroupColorButton"; ui.SetGroupColorButton.LayoutOrder = 4; ui.SetGroupColorButton.Size = UDim2.new(1, 0, 0, 28); ui.SetGroupColorButton.Text = "Set Group Color  >"; ui.SetGroupColorButton.Parent = ui.ContextMenu; styleButton(ui.SetGroupColorButton)
-
-	-- Sub-menu for creating tracks (New Categorized Version)
-	ui.CreateTrackSubMenu = Instance.new("ScrollingFrame")
-	ui.CreateTrackSubMenu.Name = "CreateTrackSubMenu"
-	ui.CreateTrackSubMenu.Size = UDim2.new(0, 150, 0, 280) -- Increased height
-	ui.CreateTrackSubMenu.Position = UDim2.new(1, 2, 0, 0)
-	ui.CreateTrackSubMenu.BackgroundColor3 = theme.TopBar
-	ui.CreateTrackSubMenu.BorderSizePixel = 1
-	ui.CreateTrackSubMenu.BorderColor3 = theme.Background
-	ui.CreateTrackSubMenu.Visible = false
-	ui.CreateTrackSubMenu.ZIndex = 21
-	local subMenuCorner = Instance.new("UICorner"); subMenuCorner.CornerRadius = UDim.new(0, 4); subMenuCorner.Parent = ui.CreateTrackSubMenu
-	ui.CreateTrackSubMenu.Parent = ui.MainFrame -- Reparent to MainFrame
-	local subMenuLayout = Instance.new("UIListLayout"); subMenuLayout.Padding = UDim.new(0, 4); subMenuLayout.Parent = ui.CreateTrackSubMenu
-	local subMenuPadding = Instance.new("UIPadding"); subMenuPadding.PaddingLeft = UDim.new(0, 4); subMenuPadding.PaddingRight = UDim.new(0, 4); subMenuPadding.PaddingTop = UDim.new(0, 4); subMenuPadding.PaddingBottom = UDim.new(0, 4); subMenuPadding.Parent = ui.CreateTrackSubMenu
-
-	local createMenuCategories = {
-		{Name = "Lights", Items = {"Light", "SpotLight", "SurfaceLight"}},
-		{Name = "Emitters", Items = {"Particle", "Beam", "Trail"}},
-		{Name = "Audio", Items = {"Sound"}},
-		{Name = "Presets", Items = {"Fire", "Smoke", "Explosion"}, Preset = true}
-	}
-
-	for _, category in ipairs(createMenuCategories) do
-		local header = Instance.new("TextLabel")
-		header.Size = UDim2.new(1, -4, 0, 20)
-		header.Text = " " .. category.Name
-		header.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-		header.TextColor3 = Color3.fromRGB(200, 200, 200)
-		header.Font = Enum.Font.SourceSansBold
-		header.TextXAlignment = Enum.TextXAlignment.Left
-		header.Parent = ui.CreateTrackSubMenu
-
-		for _, itemName in ipairs(category.Items) do
-			local button = Instance.new("TextButton")
-			button.Name = itemName .. "TrackButton"
-			button.Size = UDim2.new(1, -4, 0, 28)
-			button.Text = "  " .. itemName
-			button.Parent = ui.CreateTrackSubMenu
-			styleButton(button)
-
-			button.MouseButton1Click:Connect(function()
-				if category.Preset then
-					ui.CreatePresetTrackRequested:Fire(itemName)
-				else
-					if ui.CreateTrackSubMenu.Visible then
-						ui.AddTrackAtPlayheadRequested:Fire(itemName)
-					else
-						ui.CreateTrackRequested:Fire(itemName)
-					end
-				end
-				ui.ContextMenu.Visible = false
-				ui.CreateTrackSubMenu.Visible = false
-			end)
-		end
-	end
+	ui.CopyButton = Instance.new("TextButton"); ui.CopyButton.Name = "CopyButton"; ui.CopyButton.LayoutOrder = 1; ui.CopyButton.Size = UDim2.new(1, 0, 0, 28); ui.CopyButton.Text = "Copy"; ui.CopyButton.Parent = ui.ContextMenu; styleButton(ui.CopyButton)
+	ui.PasteButton = Instance.new("TextButton"); ui.PasteButton.Name = "PasteButton"; ui.PasteButton.LayoutOrder = 2; ui.PasteButton.Size = UDim2.new(1, 0, 0, 28); ui.PasteButton.Text = "Paste"; ui.PasteButton.Parent = ui.ContextMenu; styleButton(ui.PasteButton)
+	ui.SetGroupColorButton = Instance.new("TextButton"); ui.SetGroupColorButton.Name = "SetGroupColorButton"; ui.SetGroupColorButton.LayoutOrder = 3; ui.SetGroupColorButton.Size = UDim2.new(1, 0, 0, 28); ui.SetGroupColorButton.Text = "Set Group Color  >"; ui.SetGroupColorButton.Parent = ui.ContextMenu; styleButton(ui.SetGroupColorButton)
 
 	-- Sub-menu for group colors
 	ui.GroupColorSubMenu = Instance.new("Frame")
@@ -314,9 +281,7 @@ function UIManager.createUI(widget)
 		activeSubMenu.Visible = true
 	end
 
-	ui.CreateTrackButton.MouseEnter:Connect(function() showSubMenu(ui.CreateTrackSubMenu) end)
 	ui.SetGroupColorButton.MouseEnter:Connect(function() showSubMenu(ui.GroupColorSubMenu) end)
-	ui.CreateTrackSubMenu.MouseEnter:Connect(cancelHide)
 	ui.GroupColorSubMenu.MouseEnter:Connect(cancelHide)
 
 	ui.ContextMenu.MouseLeave:Connect(scheduleHide)

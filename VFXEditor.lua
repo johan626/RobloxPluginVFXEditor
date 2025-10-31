@@ -20,6 +20,7 @@ local Exporter = require(script.VFXEditorPlugin.Exporter)
 local DataManager = require(script.VFXEditorPlugin.DataManager)
 local HistoryManager = require(script.VFXEditorPlugin.HistoryManager)
 local Config = require(script.VFXEditorPlugin.Config)
+local ComponentDragger = require(script.VFXEditorPlugin.ComponentDragger)
 
 -- Plugin Initialization
 local toolbar = plugin:CreateToolbar("VFX Editor")
@@ -38,6 +39,7 @@ local timelineManager = TimelineManager.new(ui, previewManager.playhead, history
 previewManager:setTimelineManager(timelineManager) -- Now inject the dependency
 
 local dataManager = DataManager.new(plugin, timelineManager, ui) -- Pass UI to DataManager
+local componentDragger = ComponentDragger.new(ui)
 
 -- Connection tracking for global inputs
 local userInputConnection = nil
@@ -68,47 +70,30 @@ timelineManager.TrackDeleted:Connect(function()
 	PropertiesManager.clear(ui.PropertiesPanel)
 end)
 
+-- Connect the new drag-and-drop component creation
+componentDragger.ComponentDropped:Connect(function(componentType, isPreset, mousePos)
+	local timeline = ui.Timeline
+	local relativeX = mousePos.X - timeline.AbsolutePosition.X + timeline.CanvasPosition.X
+	local dropTime = relativeX / (timelineManager.PIXELS_PER_SECOND * timelineManager.zoom)
+
+	if isPreset then
+		timelineManager:createTrackFromPreset(componentType, dropTime)
+	else
+		local trackData = {
+			ComponentType = componentType,
+			StartTime = dropTime,
+			Duration = 1 -- Default duration
+		}
+		timelineManager:addDefaultAttributes(trackData)
+		timelineManager:createTracks({trackData})
+	end
+end)
+
+
 -- From right-click context menu
-ui.CreateTrackRequested:Connect(function(componentType)
-	local trackData = {
-		ComponentType = componentType,
-		StartTime = timelineManager.pasteTime,
-		Duration = 1
-	}
-	timelineManager:addDefaultAttributes(trackData)
-	timelineManager:createTracks({trackData})
-end)
-
--- From top bar "Add Track" button
-ui.AddTrackAtPlayheadRequested:Connect(function(componentType)
-	local zoomedPixelsPerSecond = timelineManager.PIXELS_PER_SECOND * timelineManager.zoom
-	local playheadTime = timelineManager.playhead.Position.X.Offset / zoomedPixelsPerSecond
-
-	local trackData = {
-		ComponentType = componentType,
-		StartTime = playheadTime,
-		Duration = 1
-	}
-	timelineManager:addDefaultAttributes(trackData)
-	timelineManager:createTracks({trackData})
-end)
-
-
-ui.CreatePresetTrackRequested:Connect(function(presetName)
-	local zoomedPixelsPerSecond = timelineManager.PIXELS_PER_SECOND * timelineManager.zoom
-	local playheadTime = timelineManager.playhead.Position.X.Offset / zoomedPixelsPerSecond
-	timelineManager:createTrackFromPreset(presetName, playheadTime)
-end)
-
 -- Top Bar Button Connections
 ui.UndoButton.MouseButton1Click:Connect(function() historyManager:undo() end)
 ui.RedoButton.MouseButton1Click:Connect(function() historyManager:redo() end)
-
-ui.AddTrackButton.MouseButton1Click:Connect(function()
-	local menu = ui.CreateTrackSubMenu
-	menu.Position = UDim2.new(0, ui.AddTrackButton.AbsolutePosition.X, 0, ui.AddTrackButton.AbsolutePosition.Y + ui.AddTrackButton.AbsoluteSize.Y)
-	menu.Visible = not menu.Visible
-end)
 
 ui.CreateVFXButton.MouseButton1Click:Connect(function()
 	local vfxContainer = Instance.new("Folder"); vfxContainer.Name = "NewVFX"
