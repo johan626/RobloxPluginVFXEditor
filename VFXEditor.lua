@@ -88,6 +88,12 @@ ui.CreateTrackRequested:Connect(function(componentType)
 	timelineManager:createTracks({trackData})
 end)
 
+ui.CreatePresetTrackRequested:Connect(function(presetName)
+	local zoomedPixelsPerSecond = timelineManager.PIXELS_PER_SECOND * timelineManager.zoom
+	local playheadTime = timelineManager.playhead.Position.X.Offset / zoomedPixelsPerSecond
+	timelineManager:createTrackFromPreset(presetName, playheadTime)
+end)
+
 -- Top Bar Button Connections
 ui.UndoButton.MouseButton1Click:Connect(function() historyManager:undo() end)
 ui.RedoButton.MouseButton1Click:Connect(function() historyManager:redo() end)
