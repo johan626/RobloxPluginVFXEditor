@@ -5,12 +5,33 @@ local Config = require(script.Parent.Config)
 
 local Exporter = {}
 
-function Exporter.generateModuleScriptCode(timeline)
+-- Helper to format a single value for the exported code string
+local function formatValue(value)
+	local valueType = typeof(value)
+	if valueType == "string" then
+		return '"' .. tostring(value):gsub('"', '\\"') .. '"'
+	elseif valueType == "Color3" then
+		return string.format("Color3.fromRGB(%.2f, %.2f, %.2f)", value.r * 255, value.g * 255, value.b * 255)
+	elseif valueType == "boolean" then
+		return tostring(value)
+	elseif valueType == "number" then
+		return tostring(value)
+	elseif valueType == "table" then -- For easing tables
+		if value.p1x then
+			return string.format("{p1x=%.2f, p1y=%.2f, p2x=%.2f, p2y=%.2f}", value.p1x, value.p1y, value.p2x, value.p2y)
+		end
+		return 'nil' -- Or handle other table types if needed
+	else
+		return 'nil'
+	end
+end
+
+function Exporter.generateModuleScriptCode(timelineManager)
 	local tracksData = {}
 	local totalDuration = 0
 
-	for _, track in ipairs(timeline:GetChildren()) do
-		if track:IsA("TextButton") and track.Name == "TimelineTrack" then
+	for _, track in ipairs(timelineManager.timeline:GetChildren()) do
+		if track:IsA("Frame") and track.Name == "TimelineTrack" then
 			local startTime = track:GetAttribute("StartTime")
 			local duration = track:GetAttribute("Duration")
 			if startTime + duration > totalDuration then
@@ -27,10 +48,53 @@ function Exporter.generateModuleScriptCode(timeline)
 -- It is completely self-contained and does not require any external modules.
 local Debris = game:GetService("Debris")
 local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 local VFX = {}
 
 -- Embedded utility functions
 local Utils = {}
+function Utils.cubicBezier1D(t, p0, p1, p2, p3)
+	local invT = 1 - t
+	return invT^3 * p0 + 3 * invT^2 * t * p1 + 3 * invT * t^2 * p2 + t^3 * p3
+end
+function Utils.solveBezierTforX(x, p1x, p2x)
+    local epsilon = 1e-6; local startT, endT = 0, 1; local t = x
+    for i = 1, 8 do
+        local currentX = Utils.cubicBezier1D(t, 0, p1x, p2x, 1)
+        if math.abs(currentX - x) < epsilon then return t end
+        if currentX < x then startT = t else endT = t end
+        t = (endT - startT) / 2 + startT
+    end
+    return t
+end
+function Utils.interpolate(key1, key2, time)
+    local valueType = typeof(key1.value)
+    if key1.time == key2.time then return key1.value end
+    local alpha = math.clamp((time - key1.time) / (key2.time - key1.time), 0, 1)
+    local easedAlpha = alpha
+    local easing = key1.easing
+    if easing and easing.p1x then
+        local t = Utils.solveBezierTforX(alpha, easing.p1x, easing.p2x)
+        easedAlpha = Utils.cubicBezier1D(t, 0, easing.p1y, easing.p2y, 1)
+    end
+    if valueType == "number" then return key1.value + (key2.value - key1.value) * easedAlpha
+    elseif valueType == "Color3" then return key1.value:Lerp(key2.value, easedAlpha)
+    elseif valueType == "Vector3" then return key1.value:Lerp(key2.value, easedAlpha)
+    else return key1.value end
+end
+function Utils.getInterpolatedValue(keyframes, timeIntoTrack, override)
+	if override ~= nil then return override end
+	if not keyframes or #keyframes == 0 then return nil end
+	local key1, key2
+	if #keyframes == 1 or timeIntoTrack < keyframes[1].time then return keyframes[1].value end
+	for i = 1, #keyframes - 1 do
+		if keyframes[i].time <= timeIntoTrack and keyframes[i+1].time >= timeIntoTrack then
+			key1, key2 = keyframes[i], keyframes[i+1]; break
+		end
+	end
+	if not key1 then return keyframes[#keyframes].value end
+	return Utils.interpolate(key1, key2, timeIntoTrack)
+end
 function Utils.parseColorSequence(str)
 	local keypoints = {}
 	pcall(function()
@@ -76,6 +140,7 @@ function Utils.parseNumberRange(str)
 	return NumberRange.new(1)
 end
 function Utils.parseVector3(str)
+	if not str then return Vector3.new() end
 	local x, y, z
 	pcall(function()
 		local parts = str:split(",")
@@ -97,12 +162,14 @@ VFX.Configuration = {
 		code = code .. "\t\t{\n"
 		for key, value in pairs(data) do
 			local formattedValue
-			if typeof(value) == "string" then
-				formattedValue = '"' .. tostring(value):gsub('"', '\\"') .. '"'
-			elseif typeof(value) == "Color3" then
-				formattedValue = string.format("Color3.fromRGB(%.2f, %.2f, %.2f)", value.r * 255, value.g * 255, value.b * 255)
+			if type(value) == "table" and value[1] and value[1].time then -- It's a keyframe array
+				formattedValue = "{\n"
+				for _, kf in ipairs(value) do
+					formattedValue = formattedValue .. string.format("\t\t\t\t{time=%s, value=%s, easing=%s},\n", kf.time, formatValue(kf.value), formatValue(kf.easing))
+				end
+				formattedValue = formattedValue .. "\t\t\t}"
 			else
-				formattedValue = tostring(value)
+				formattedValue = formatValue(value)
 			end
 			code = code .. string.format("\t\t\t%s = %s,\n", key, formattedValue)
 		end
@@ -113,6 +180,7 @@ VFX.Configuration = {
     }
 }
 
+-- ... (The rest of the VFX.play function is the same as the last version)
 function VFX.play(position, overrideParameters)
     overrideParameters = overrideParameters or {}
     local root = Instance.new("Model")
@@ -122,181 +190,129 @@ function VFX.play(position, overrideParameters)
         task.delay(trackData.StartTime, function()
             if not root or not root.Parent then return end
             
-            if trackData.ComponentType == "Light" then
+            local duration = overrideParameters.Duration or trackData.Duration
+            local instance = nil
+
+            if trackData.ComponentType == "Light" or trackData.ComponentType == "SpotLight" or trackData.ComponentType == "SurfaceLight" then
                 local lightAttachment = Instance.new("Attachment")
                 lightAttachment.WorldPosition = position
-                
-                local pointLight = Instance.new("PointLight")
-                pointLight.Enabled = overrideParameters.Enabled ~= nil and overrideParameters.Enabled or trackData.Enabled
-                pointLight.Brightness = overrideParameters.Brightness or trackData.Brightness
-                pointLight.Color = overrideParameters.Color or trackData.Color
-                pointLight.Range = overrideParameters.Range or trackData.Range
-                pointLight.Shadows = overrideParameters.Shadows or trackData.Shadows
-                pointLight.Parent = lightAttachment
-                
+                if trackData.ComponentType == "Light" then instance = Instance.new("PointLight")
+                elseif trackData.ComponentType == "SpotLight" then instance = Instance.new("SpotLight")
+                else instance = Instance.new("SurfaceLight"); instance.Face = Enum.NormalId[overrideParameters.Face or trackData.Face] end
+                instance.Shadows = overrideParameters.Shadows or trackData.Shadows
+                instance.Parent = lightAttachment
                 lightAttachment.Parent = root
-                Debris:AddItem(lightAttachment, trackData.Duration)
-                
-            elseif trackData.ComponentType == "SpotLight" or trackData.ComponentType == "SurfaceLight" then
-                local lightAttachment = Instance.new("Attachment")
-                lightAttachment.WorldPosition = position
-                
-                local light
-                if trackData.ComponentType == "SpotLight" then
-                	light = Instance.new("SpotLight")
-                else
-                	light = Instance.new("SurfaceLight")
-                end
-                
-                light.Enabled = overrideParameters.Enabled ~= nil and overrideParameters.Enabled or trackData.Enabled
-                light.Brightness = overrideParameters.Brightness or trackData.Brightness
-                light.Color = overrideParameters.Color or trackData.Color
-                light.Range = overrideParameters.Range or trackData.Range
-                light.Angle = overrideParameters.Angle or trackData.Angle
-                light.Face = Enum.NormalId[overrideParameters.Face or trackData.Face]
-                light.Shadows = overrideParameters.Shadows or trackData.Shadows
-                light.Parent = lightAttachment
-                
-                lightAttachment.Parent = root
-                Debris:AddItem(lightAttachment, trackData.Duration)
-                
-            elseif trackData.ComponentType == "Sound" then
-                local sound = Instance.new("Sound")
-                sound.SoundId = overrideParameters.SoundId or trackData.SoundId
-                sound.Volume = overrideParameters.Volume or trackData.Volume
-                sound.PlaybackSpeed = overrideParameters.PlaybackSpeed or trackData.PlaybackSpeed
-                sound.Looped = overrideParameters.Looped or trackData.Looped
-                sound.TimePosition = overrideParameters.TimePosition or trackData.TimePosition
-                sound.RollOffMode = Enum.RollOffMode[overrideParameters.RollOffMode or trackData.RollOffMode]
-                sound.RollOffMinDistance = overrideParameters.RollOffMinDistance or trackData.RollOffMinDistance
-                sound.RollOffMaxDistance = overrideParameters.RollOffMaxDistance or trackData.RollOffMaxDistance
-                sound.Parent = root
-                sound:Play()
-                Debris:AddItem(sound, trackData.Duration + 5)
+                Debris:AddItem(lightAttachment, duration)
+
+			elseif trackData.ComponentType == "Sound" then
+				instance = Instance.new("Sound")
+				instance.SoundId = overrideParameters.SoundId or trackData.SoundId
+				instance.Looped = overrideParameters.Looped or trackData.Looped
+				instance.RollOffMode = Enum.RollOffMode[overrideParameters.RollOffMode or trackData.RollOffMode]
+				instance.RollOffMinDistance = overrideParameters.RollOffMinDistance or trackData.RollOffMinDistance
+				instance.RollOffMaxDistance = overrideParameters.RollOffMaxDistance or trackData.RollOffMaxDistance
+				instance.Parent = root
+				instance:Play()
+				Debris:AddItem(instance, duration + 5)
                 
             elseif trackData.ComponentType == "Particle" then
                 local particleAttachment = Instance.new("Attachment")
                 particleAttachment.WorldPosition = position
-                
-                local emitter = Instance.new("ParticleEmitter")
-                emitter.Enabled = overrideParameters.Enabled ~= nil and overrideParameters.Enabled or trackData.Enabled
-                emitter.Rate = overrideParameters.Rate or trackData.Rate
-                emitter.Lifetime = Utils.parseNumberRange(overrideParameters.Lifetime or trackData.Lifetime)
-                emitter.Size = Utils.parseNumberSequence(overrideParameters.Size or trackData.Size)
-                emitter.Color = Utils.parseColorSequence(overrideParameters.Color or trackData.Color)
-                emitter.Texture = overrideParameters.Texture or trackData.Texture
-                local spreadAngle = tostring(overrideParameters.SpreadAngle or trackData.SpreadAngle)
-				local spreadAngleParts = spreadAngle:split(" ")
-				emitter.SpreadAngle = Vector2.new(tonumber(spreadAngleParts[1]) or 0, tonumber(spreadAngleParts[2]) or tonumber(spreadAngleParts[1]) or 0)
-                emitter.Acceleration = Utils.parseVector3(overrideParameters.Acceleration or trackData.Acceleration)
-                emitter.Drag = overrideParameters.Drag or trackData.Drag
-                emitter.EmissionDirection = Enum.NormalId[overrideParameters.EmissionDirection or trackData.EmissionDirection]
-                emitter.LightEmission = overrideParameters.LightEmission or trackData.LightEmission
-                emitter.LightInfluence = overrideParameters.LightInfluence or trackData.LightInfluence
-                emitter.Orientation = Enum.ParticleOrientation[overrideParameters.Orientation or trackData.Orientation]
-                emitter.RotSpeed = Utils.parseNumberRange(overrideParameters.RotSpeed or trackData.RotSpeed)
-                emitter.Rotation = Utils.parseNumberRange(overrideParameters.Rotation or trackData.Rotation)
-                emitter.Speed = Utils.parseNumberRange(overrideParameters.Speed or trackData.Speed)
-                emitter.Squash = Utils.parseNumberSequence(overrideParameters.Squash or trackData.Squash)
-                emitter.TimeScale = overrideParameters.TimeScale or trackData.TimeScale
-                emitter.Transparency = Utils.parseNumberSequence(overrideParameters.Transparency or trackData.Transparency)
-                emitter.ZOffset = overrideParameters.ZOffset or trackData.ZOffset
-                emitter.Parent = particleAttachment
-                
+                instance = Instance.new("ParticleEmitter")
+				instance.Lifetime = Utils.parseNumberRange(overrideParameters.Lifetime or trackData.Lifetime)
+				instance.Size = Utils.parseNumberSequence(overrideParameters.Size or trackData.Size)
+				instance.Color = Utils.parseColorSequence(overrideParameters.Color or trackData.Color)
+				instance.Texture = overrideParameters.Texture or trackData.Texture
+				local sa = tostring(overrideParameters.SpreadAngle or trackData.SpreadAngle):split(" ")
+				instance.SpreadAngle = Vector2.new(tonumber(sa[1]) or 0, tonumber(sa[2]) or tonumber(sa[1]) or 0)
+				instance.EmissionDirection = Enum.NormalId[overrideParameters.EmissionDirection or trackData.EmissionDirection]
+				instance.Orientation = Enum.ParticleOrientation[overrideParameters.Orientation or trackData.Orientation]
+				instance.RotSpeed = Utils.parseNumberRange(overrideParameters.RotSpeed or trackData.RotSpeed)
+				instance.Rotation = Utils.parseNumberRange(overrideParameters.Rotation or trackData.Rotation)
+				instance.Speed = Utils.parseNumberRange(overrideParameters.Speed or trackData.Speed)
+				instance.Squash = Utils.parseNumberSequence(overrideParameters.Squash or trackData.Squash)
+				instance.Transparency = Utils.parseNumberSequence(overrideParameters.Transparency or trackData.Transparency)
+                instance.Parent = particleAttachment
                 particleAttachment.Parent = root
-                Debris:AddItem(particleAttachment, trackData.Duration)
-                
+                Debris:AddItem(particleAttachment, duration)
+            
             elseif trackData.ComponentType == "Beam" then
-                local beam = Instance.new("Beam")
-                beam.Enabled = overrideParameters.Enabled ~= nil and overrideParameters.Enabled or trackData.Enabled
-                beam.Color = Utils.parseColorSequence(overrideParameters.Color or trackData.Color)
-                beam.Texture = overrideParameters.Texture or trackData.Texture
-                beam.Width0 = overrideParameters.Width0 or trackData.Width0
-                beam.Width1 = overrideParameters.Width1 or trackData.Width1
-                beam.CurveSize0 = overrideParameters.CurveSize0 or trackData.CurveSize0
-                beam.CurveSize1 = overrideParameters.CurveSize1 or trackData.CurveSize1
-                beam.FaceCamera = overrideParameters.FaceCamera or trackData.FaceCamera
-                beam.LightEmission = overrideParameters.LightEmission or trackData.LightEmission
-                beam.LightInfluence = overrideParameters.LightInfluence or trackData.LightInfluence
-                beam.Segments = overrideParameters.Segments or trackData.Segments
-                beam.TextureLength = overrideParameters.TextureLength or trackData.TextureLength
-                beam.TextureMode = Enum.TextureMode[overrideParameters.TextureMode or trackData.TextureMode]
-                beam.TextureSpeed = overrideParameters.TextureSpeed or trackData.TextureSpeed
-                beam.Transparency = Utils.parseNumberSequence(overrideParameters.Transparency or trackData.Transparency)
-                beam.ZOffset = overrideParameters.ZOffset or trackData.ZOffset
-
+                instance = Instance.new("Beam")
+				instance.Color = Utils.parseColorSequence(overrideParameters.Color or trackData.Color); instance.Texture = overrideParameters.Texture or trackData.Texture
+				instance.CurveSize0 = overrideParameters.CurveSize0 or trackData.CurveSize0; instance.CurveSize1 = overrideParameters.CurveSize1 or trackData.CurveSize1
+				instance.FaceCamera = overrideParameters.FaceCamera or trackData.FaceCamera; instance.LightInfluence = overrideParameters.LightInfluence or trackData.LightInfluence
+				instance.Segments = overrideParameters.Segments or trackData.Segments; instance.TextureLength = overrideParameters.TextureLength or trackData.TextureLength
+				instance.TextureMode = Enum.TextureMode[overrideParameters.TextureMode or trackData.TextureMode]; instance.TextureSpeed = overrideParameters.TextureSpeed or trackData.TextureSpeed
+				instance.Transparency = Utils.parseNumberSequence(overrideParameters.Transparency or trackData.Transparency); instance.ZOffset = overrideParameters.ZOffset or trackData.ZOffset
                 local attachment0 = Instance.new("Attachment")
                 attachment0.WorldPosition = position + Utils.parseVector3(overrideParameters.Attachment0Offset or trackData.Attachment0Offset)
                 attachment0.Parent = root
-                
                 local attachment1 = Instance.new("Attachment")
                 attachment1.WorldPosition = position + Utils.parseVector3(overrideParameters.Attachment1Offset or trackData.Attachment1Offset)
                 attachment1.Parent = root
-
-                beam.Attachment0 = attachment0
-                beam.Attachment1 = attachment1
-                beam.Parent = root
-                Debris:AddItem(beam, trackData.Duration)
-                
+                instance.Attachment0 = attachment0
+                instance.Attachment1 = attachment1
+                Debris:AddItem(instance, duration)
+            
             elseif trackData.ComponentType == "Trail" then
                 local trailPart = Instance.new("Part")
-                trailPart.Size = Vector3.new(0.1, 0.1, 0.1)
-                trailPart.Transparency = 1
-                trailPart.Anchored = true
+                trailPart.Size = Vector3.new(0.1, 0.1, 0.1); trailPart.Transparency = 1; trailPart.Anchored = true
                 trailPart.CFrame = CFrame.new(position + Utils.parseVector3(overrideParameters.StartPosition or trackData.StartPosition))
-                
-                local attachment0 = Instance.new("Attachment")
-                attachment0.Parent = trailPart
-                local attachment1 = Instance.new("Attachment")
-                attachment1.Position = Vector3.new(0, 0, -1)
-                attachment1.Parent = trailPart
-
-                local trail = Instance.new("Trail")
-                trail.Enabled = overrideParameters.Enabled ~= nil and overrideParameters.Enabled or trackData.Enabled
-                trail.Color = Utils.parseColorSequence(overrideParameters.Color or trackData.Color)
-                trail.Texture = overrideParameters.Texture or trackData.Texture
-                trail.Lifetime = overrideParameters.Lifetime or trackData.Lifetime
-                trail.WidthScale = Utils.parseNumberSequence(overrideParameters.WidthScale or trackData.WidthScale)
-                trail.FaceCamera = overrideParameters.FaceCamera or trackData.FaceCamera
-                trail.LightEmission = overrideParameters.LightEmission or trackData.LightEmission
-                trail.LightInfluence = overrideParameters.LightInfluence or trackData.LightInfluence
-                trail.MinLength = overrideParameters.MinLength or trackData.MinLength
-                trail.MaxLength = overrideParameters.MaxLength or trackData.MaxLength
-                trail.TextureLength = overrideParameters.TextureLength or trackData.TextureLength
-                trail.TextureMode = Enum.TextureMode[overrideParameters.TextureMode or trackData.TextureMode]
-                trail.Transparency = Utils.parseNumberSequence(overrideParameters.Transparency or trackData.Transparency)
-                trail.Attachment0 = attachment0
-                trail.Attachment1 = attachment1
-                trail.Parent = trailPart
-                
+                local attachment0 = Instance.new("Attachment"); attachment0.Parent = trailPart
+                local attachment1 = Instance.new("Attachment"); attachment1.Position = Vector3.new(0, 0, -1); attachment1.Parent = trailPart
+                instance = Instance.new("Trail")
+				instance.Color = Utils.parseColorSequence(overrideParameters.Color or trackData.Color); instance.Texture = overrideParameters.Texture or trackData.Texture
+				instance.Lifetime = overrideParameters.Lifetime or trackData.Lifetime; instance.WidthScale = Utils.parseNumberSequence(overrideParameters.WidthScale or trackData.WidthScale)
+				instance.FaceCamera = overrideParameters.FaceCamera or trackData.FaceCamera; instance.LightInfluence = overrideParameters.LightInfluence or trackData.LightInfluence
+				instance.MinLength = overrideParameters.MinLength or trackData.MinLength; instance.MaxLength = overrideParameters.MaxLength or trackData.MaxLength
+				instance.TextureLength = overrideParameters.TextureLength or trackData.TextureLength; instance.TextureMode = Enum.TextureMode[overrideParameters.TextureMode or trackData.TextureMode]
+				instance.Transparency = Utils.parseNumberSequence(overrideParameters.Transparency or trackData.Transparency)
+                instance.Attachment0 = attachment0
+                instance.Attachment1 = attachment1
+                instance.Parent = trailPart
                 trailPart.Parent = root
-                
-                local tweenInfo = TweenInfo.new(trackData.Duration, Enum.EasingStyle.Linear)
+                local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
                 local goal = {CFrame = CFrame.new(position + Utils.parseVector3(overrideParameters.EndPosition or trackData.EndPosition))}
                 local tween = TweenService:Create(trailPart, tweenInfo, goal)
                 tween:Play()
-                
-                Debris:AddItem(trailPart, trackData.Duration)
+                Debris:AddItem(trailPart, duration)
+            end
+
+            if instance then
+				if (overrideParameters.Enabled ~= nil and overrideParameters.Enabled) or (overrideParameters.Enabled == nil and trackData.Enabled) then instance.Enabled = true end
+                local conn = RunService.Heartbeat:Connect(function(dt)
+                    local timeInTrack = (workspace:GetServerTimeNow() - (root:GetAttribute("StartTime") or 0)) - trackData.StartTime
+                    if timeInTrack > duration or not instance or not instance.Parent then
+                        conn:Disconnect()
+                        return
+                    end
+                    for propName, propValue in pairs(trackData) do
+                        if type(propValue) == "table" and propValue[1] and type(propValue[1]) == "table" then
+                            local value = Utils.getInterpolatedValue(propValue, timeInTrack, overrideParameters[propName])
+                            if value ~= nil then pcall(function() instance[propName] = value end) end
+                        end
+                    end
+                end)
             end
         end)
     end
     
+    root:SetAttribute("StartTime", workspace:GetServerTimeNow())
     root.Parent = workspace
-    Debris:AddItem(root, VFX.Configuration.TotalDuration)
+    Debris:AddItem(root, VFX.Configuration.TotalDuration + 1)
 end
 
 return VFX
 ]]
-	return code
 end
 
-function Exporter.export(timeline, vfxContainer)
+function Exporter.export(timelineManager, vfxContainer)
 	if not vfxContainer or not vfxContainer:FindFirstChild("Configuration") then
 		warn("Please select a valid VFX Container.")
 		return
 	end
 
-	local moduleCode = Exporter.generateModuleScriptCode(timeline)
+	local moduleCode = Exporter.generateModuleScriptCode(timelineManager)
 
 	local existing = vfxContainer:FindFirstChild("VFX_Module")
 	if existing then existing:Destroy() end
@@ -306,7 +322,6 @@ function Exporter.export(timeline, vfxContainer)
 	moduleScript.Source = moduleCode
 	moduleScript.Parent = vfxContainer
 
-	-- No longer need to copy the Utils module
 	local oldUtils = vfxContainer:FindFirstChild("Utils")
 	if oldUtils then
 		oldUtils:Destroy()
@@ -316,3 +331,4 @@ function Exporter.export(timeline, vfxContainer)
 end
 
 return Exporter
+	
