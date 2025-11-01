@@ -16,6 +16,7 @@ function PreviewManager.new(ui)
 	self.Config = Config
 	self.ui = ui
 	self.timelineManager = nil -- Will be set later
+	self.propertiesManager = nil -- Will be set later
 	self.timeline = ui.Timeline -- Direct reference to UI component
 	self.previewFolder = nil
 
@@ -45,11 +46,18 @@ function PreviewManager:setTimelineManager(timelineManager)
 	end)
 end
 
+function PreviewManager:setPropertiesManager(propertiesManager)
+	self.propertiesManager = propertiesManager
+end
+
 -- The core function for real-time scrubbing and playback
 function PreviewManager:updatePreviewAtTime(time)
 	if not self.timelineManager then return end -- Guard until timelineManager is set
 
 	self.currentTime = time
+	if self.propertiesManager then
+		self.propertiesManager.updateValues(time)
+	end
 	local playheadX = time * self.Config.PIXELS_PER_SECOND * self.timelineManager.zoom
 	self.playhead.Position = UDim2.new(0, playheadX, 0, 0)
 
@@ -68,7 +76,7 @@ function PreviewManager:updatePreviewAtTime(time)
 	local trackStates = self.timelineManager:getTrackStates()
 	local activeTracks = {}
 	for _, track in ipairs(self.timeline:GetChildren()) do
-		if track:IsA("TextButton") and track.Name == "TimelineTrack" then
+		if track:IsA("Frame") and track.Name == "TimelineTrack" then
 			local trackState = trackStates[track]
 			if not trackState or not trackState.IsVisible then
 				continue -- Skip muted/unsoloed tracks
@@ -139,26 +147,20 @@ function PreviewManager:_createPreviewInstance(track, previewPosition)
 
 		local emitter = Instance.new("ParticleEmitter")
 		emitter.Enabled = attributes.Enabled
-		emitter.Rate = attributes.Rate
 		emitter.Lifetime = Utils.parseNumberRange(attributes.Lifetime)
 		emitter.Size = Utils.parseNumberSequence(attributes.Size)
 		emitter.Color = Utils.parseColorSequence(attributes.Color)
 		emitter.Texture = attributes.Texture
 		local spreadAngle = tostring(attributes.SpreadAngle):split(" ")
 		emitter.SpreadAngle = Vector2.new(tonumber(spreadAngle[1]) or 0, tonumber(spreadAngle[2]) or tonumber(spreadAngle[1]) or 0)
-		emitter.Acceleration = Utils.parseVector3(attributes.Acceleration)
-		emitter.Drag = attributes.Drag
 		emitter.EmissionDirection = Utils.parseEnum(Enum.NormalId, attributes.EmissionDirection) or Enum.NormalId.Top
-		emitter.LightEmission = attributes.LightEmission
 		emitter.LightInfluence = attributes.LightInfluence
 		emitter.Orientation = Utils.parseEnum(Enum.ParticleOrientation, attributes.Orientation) or Enum.ParticleOrientation.FacingCamera
 		emitter.RotSpeed = Utils.parseNumberRange(attributes.RotSpeed)
 		emitter.Rotation = Utils.parseNumberRange(attributes.Rotation)
 		emitter.Speed = Utils.parseNumberRange(attributes.Speed)
 		emitter.Squash = Utils.parseNumberSequence(attributes.Squash)
-		emitter.TimeScale = attributes.TimeScale
 		emitter.Transparency = Utils.parseNumberSequence(attributes.Transparency)
-		emitter.ZOffset = attributes.ZOffset
 		emitter.Parent = attachment
 
 		attachment.Parent = self.previewFolder
@@ -175,6 +177,36 @@ function PreviewManager:_createPreviewInstance(track, previewPosition)
 	return instance
 end
 
+-- Gets the interpolated value of a property at a specific time
+function PreviewManager:_getInterpolatedValue(keyframes, timeIntoTrack)
+	if not keyframes or #keyframes == 0 then return nil end
+
+	-- Find the two keyframes to interpolate between
+	local key1, key2
+
+	-- If there's only one keyframe, or time is before the first, use the first.
+	if #keyframes == 1 or timeIntoTrack < keyframes[1].time then
+		return keyframes[1].value
+	end
+
+	-- Find the correct segment
+	for i = 1, #keyframes - 1 do
+		if keyframes[i].time <= timeIntoTrack and keyframes[i+1].time >= timeIntoTrack then
+			key1 = keyframes[i]
+			key2 = keyframes[i+1]
+			break
+		end
+	end
+
+	-- If time is after the last keyframe, clamp to the last value
+	if not key1 then
+		return keyframes[#keyframes].value
+	end
+
+	-- Interpolate using the unified function
+	return Utils.interpolate(key1, key2, timeIntoTrack)
+end
+
 function PreviewManager:_updateInstanceProperties(instance, attributes, timeIntoTrack, duration, previewPosition)
 	if not instance or typeof(instance) ~= "Instance" then return end
 
@@ -187,12 +219,12 @@ function PreviewManager:_updateInstanceProperties(instance, attributes, timeInto
 		instance.WorldPosition = previewPosition
 		local light = instance:FindFirstChildOfClass("Light")
 		light.Enabled = attributes.Enabled
-		light.Brightness = attributes.Brightness
-		light.Color = attributes.Color
-		light.Range = attributes.Range
+		light.Brightness = self:_getInterpolatedValue(attributes.Brightness, timeIntoTrack)
+		light.Color = self:_getInterpolatedValue(attributes.Color, timeIntoTrack)
+		light.Range = self:_getInterpolatedValue(attributes.Range, timeIntoTrack)
 		light.Shadows = attributes.Shadows
 		if componentType ~= "Light" then
-			light.Angle = attributes.Angle
+			light.Angle = self:_getInterpolatedValue(attributes.Angle, timeIntoTrack)
 			light.Face = Utils.parseEnum(Enum.NormalId, attributes.Face) or Enum.NormalId.Front
 		end
 	elseif componentType == "Beam" then
@@ -200,13 +232,13 @@ function PreviewManager:_updateInstanceProperties(instance, attributes, timeInto
 
 		instance.Enabled = attributes.Enabled
 		instance.Color = Utils.parseColorSequence(attributes.Color)
-		instance.Width0 = attributes.Width0
-		instance.Width1 = attributes.Width1
+		instance.Width0 = self:_getInterpolatedValue(attributes.Width0, timeIntoTrack)
+		instance.Width1 = self:_getInterpolatedValue(attributes.Width1, timeIntoTrack)
 		instance.Texture = attributes.Texture
 		instance.CurveSize0 = attributes.CurveSize0
 		instance.CurveSize1 = attributes.CurveSize1
 		instance.FaceCamera = attributes.FaceCamera
-		instance.LightEmission = attributes.LightEmission
+		instance.LightEmission = self:_getInterpolatedValue(attributes.LightEmission, timeIntoTrack)
 		instance.LightInfluence = attributes.LightInfluence
 		instance.Segments = attributes.Segments
 		instance.TextureLength = attributes.TextureLength
@@ -217,8 +249,14 @@ function PreviewManager:_updateInstanceProperties(instance, attributes, timeInto
 		instance.Attachment0.WorldPosition = previewPosition + Utils.parseVector3(attributes.Attachment0Offset)
 		instance.Attachment1.WorldPosition = previewPosition + Utils.parseVector3(attributes.Attachment1Offset)
 	elseif componentType == "Particle" then
-		-- Properties are set on creation, only update position.
 		if not (instance:IsA("Attachment") and instance:FindFirstChildOfClass("ParticleEmitter")) then return end
+		local emitter = instance:FindFirstChildOfClass("ParticleEmitter")
+		emitter.Rate = self:_getInterpolatedValue(attributes.Rate, timeIntoTrack) or emitter.Rate
+		emitter.Acceleration = Utils.parseVector3(self:_getInterpolatedValue(attributes.Acceleration, timeIntoTrack) or "0,0,0")
+		emitter.Drag = self:_getInterpolatedValue(attributes.Drag, timeIntoTrack) or emitter.Drag
+		emitter.LightEmission = self:_getInterpolatedValue(attributes.LightEmission, timeIntoTrack) or emitter.LightEmission
+		emitter.TimeScale = self:_getInterpolatedValue(attributes.TimeScale, timeIntoTrack) or emitter.TimeScale
+		emitter.ZOffset = self:_getInterpolatedValue(attributes.ZOffset, timeIntoTrack) or emitter.ZOffset
 		instance.WorldPosition = previewPosition
 
 	elseif componentType == "Trail" then
@@ -234,7 +272,7 @@ function PreviewManager:_updateInstanceProperties(instance, attributes, timeInto
 		trail.WidthScale = Utils.parseNumberSequence(attributes.WidthScale)
 		trail.Texture = attributes.Texture
 		trail.FaceCamera = attributes.FaceCamera
-		trail.LightEmission = attributes.LightEmission
+		trail.LightEmission = self:_getInterpolatedValue(attributes.LightEmission, timeIntoTrack) or trail.LightEmission
 		trail.LightInfluence = attributes.LightInfluence
 		trail.MinLength = attributes.MinLength
 		trail.MaxLength = attributes.MaxLength
@@ -243,6 +281,7 @@ function PreviewManager:_updateInstanceProperties(instance, attributes, timeInto
 		trail.Transparency = Utils.parseNumberSequence(attributes.Transparency)
 	end
 end
+
 
 function PreviewManager:play()
 	if self.isPlaying then return end
@@ -296,7 +335,7 @@ function PreviewManager:_handleSounds(shouldPlay)
 	local trackStates = self.timelineManager:getTrackStates()
 
 	for _, track in ipairs(self.timeline:GetChildren()) do
-		if track:IsA("TextButton") and track.Name == "TimelineTrack" and track:GetAttribute("ComponentType") == "Sound" then
+		if track:IsA("Frame") and track.Name == "TimelineTrack" and track:GetAttribute("ComponentType") == "Sound" then
 			local instance = self.previewInstances[track]
 			local trackState = trackStates[track]
 
@@ -304,7 +343,15 @@ function PreviewManager:_handleSounds(shouldPlay)
 				local startTime = track:GetAttribute("StartTime")
 				if self.currentTime >= startTime and not instance then
 					local sound = Instance.new("Sound")
-					sound.SoundId = track:GetAttribute("SoundId"); sound.Volume = track:GetAttribute("Volume"); sound.PlaybackSpeed = track:GetAttribute("PlaybackSpeed"); sound.TimePosition = self.currentTime - startTime; sound.Looped = track:GetAttribute("Looped"); sound.RollOffMode = Utils.parseEnum(Enum.RollOffMode, track:GetAttribute("RollOffMode")) or Enum.RollOffMode.Inverse; sound.RollOffMinDistance = track:GetAttribute("RollOffMinDistance"); sound.RollOffMaxDistance = track:GetAttribute("RollOffMaxDistance")
+					local attributes = track:GetAttributes()
+					sound.SoundId = attributes.SoundId
+					sound.Volume = self:_getInterpolatedValue(attributes.Volume, self.currentTime - startTime)
+					sound.PlaybackSpeed = self:_getInterpolatedValue(attributes.PlaybackSpeed, self.currentTime - startTime)
+					sound.TimePosition = self.currentTime - startTime
+					sound.Looped = attributes.Looped
+					sound.RollOffMode = Utils.parseEnum(Enum.RollOffMode, attributes.RollOffMode) or Enum.RollOffMode.Inverse
+					sound.RollOffMinDistance = attributes.RollOffMinDistance
+					sound.RollOffMaxDistance = attributes.RollOffMaxDistance
 					sound.Parent = self.previewFolder
 					sound:Play()
 					self.previewInstances[track] = sound
