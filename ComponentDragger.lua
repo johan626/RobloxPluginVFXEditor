@@ -55,7 +55,9 @@ function ComponentDragger:_connectEvents()
 	UserInputService.InputChanged:Connect(function(input)
 		if self.isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
 			if self.ghostFrame then
-				local relativePos = input.Position - self.ui.MainFrame.AbsolutePosition
+				-- input.Position is a Vector3, convert to Vector2 for UI calculations
+				local mousePos2D = Vector2.new(input.Position.X, input.Position.Y)
+				local relativePos = mousePos2D - self.ui.MainFrame.AbsolutePosition
 				self.ghostFrame.Position = UDim2.new(0, relativePos.X + 5, 0, relativePos.Y + 5)
 			end
 		end
