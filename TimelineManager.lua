@@ -54,14 +54,19 @@ local ParticlePresets = {
 local TimelineManager = {}
 TimelineManager.__index = TimelineManager
 
-function TimelineManager.new(ui, playhead, historyManager)
+function TimelineManager.new(ui, playhead, historyManager, PropertiesManager)
 	local self = setmetatable({}, TimelineManager)
+
+	PropertiesManager.KeyframeChanged:Connect(function(track)
+		self:_drawKeyframes(track)
+	end)
 
 	self.ui = ui
 	self.timeline = ui.Timeline
 	self.playhead = playhead
 	self.historyManager = historyManager
 	self.trackInteractor = TrackInteractor.new(self, ui, playhead, historyManager)
+	self.PropertiesManager = PropertiesManager
 
 	self.PIXELS_PER_SECOND = Config.PIXELS_PER_SECOND
 	self.SNAP_INTERVAL = Config.SNAP_INTERVAL
@@ -74,6 +79,7 @@ function TimelineManager.new(ui, playhead, historyManager)
 	self.startMouseX = 0
 	self.ghostTrack = nil
 	self.selectedTracks = {}
+	self.selectedKeyframes = {} -- New table for selected keyframes
 	self.copiedTracksData = nil
 	self.pasteTime = 0
 	self.zoom = 1
@@ -82,6 +88,8 @@ function TimelineManager.new(ui, playhead, historyManager)
 	self.isPanning = false
 	self.panStartPosition = Vector2.new(0, 0)
 	self.panStartCanvasPosition = Vector2.new(0, 0)
+
+	self.connections = {}
 
 	self.TrackSelected = {}
 	function self.TrackSelected:Connect(callback) table.insert(self, callback) end
@@ -132,6 +140,52 @@ end
 
 
 -- INTERNAL, NON-HISTORY ACTION: Create track UI directly
+function TimelineManager:_drawKeyframes(track)
+	local keyframeContainer = track:FindFirstChild("KeyframeContainer")
+	if not keyframeContainer then return end
+
+	keyframeContainer:ClearAllChildren()
+
+	local attributes = track:GetAttributes()
+	local duration = attributes.Duration or 0
+	if duration == 0 then return end
+
+	for propName, propValue in pairs(attributes) do
+		if type(propValue) == "table" and propValue[1] and propValue[1].time then
+			for _, kf in ipairs(propValue) do
+				local keyframeMarker = Instance.new("TextButton")
+				keyframeMarker.Name = "KeyframeMarker"
+				keyframeMarker.Text = ""
+				keyframeMarker.Size = UDim2.new(0, 8, 0, 8)
+				keyframeMarker.AnchorPoint = Vector2.new(0.5, 0.5)
+				keyframeMarker.Position = UDim2.new(kf.time / duration, 0, 0.5, 0)
+				keyframeMarker.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+				keyframeMarker.BorderSizePixel = 0
+
+				keyframeMarker:SetAttribute("Track", track)
+				keyframeMarker:SetAttribute("PropName", propName)
+				keyframeMarker:SetAttribute("Time", kf.time)
+
+				local stroke = Instance.new("UIStroke")
+				stroke.Name = "UIStroke"
+				stroke.Color = Color3.fromRGB(0, 150, 255)
+				stroke.Thickness = 2
+				stroke.Enabled = false
+				stroke.Parent = keyframeMarker
+
+				local corner = Instance.new("UICorner")
+				corner.CornerRadius = UDim.new(1, 0)
+				corner.Parent = keyframeMarker
+
+				keyframeMarker.Parent = keyframeContainer
+
+				-- Make it interactive
+				self.trackInteractor:makeKeyframeInteractive(keyframeMarker)
+			end
+		end
+	end
+end
+
 function TimelineManager:_createTrackUI(trackData)
 	local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * self.zoom
 	local startTime = trackData.StartTime or 0
@@ -221,12 +275,21 @@ function TimelineManager:_createTrackUI(trackData)
 	trackLabel.TextXAlignment = Enum.TextXAlignment.Left
 	trackLabel.Parent = newTrack
 
+	-- Add a container for keyframe visuals
+	local keyframeContainer = Instance.new("Frame")
+	keyframeContainer.Name = "KeyframeContainer"
+	keyframeContainer.Size = UDim2.new(1, 0, 1, 0)
+	keyframeContainer.BackgroundTransparency = 1
+	keyframeContainer.Parent = newTrack
+
 	self:_updateLockVisuals(newTrack, trackData.IsLocked)
 	self:_updateMuteSoloVisuals(newTrack)
 
 	newTrack.Parent = self.timeline
 
 	self.trackInteractor:makeTrackInteractive(newTrack)
+
+	self:_drawKeyframes(newTrack)
 
 	return newTrack
 end
@@ -340,6 +403,76 @@ function TimelineManager:removeTrackFromSelection(track)
 	if baseColor then
 		track.BackgroundColor3 = baseColor
 	end
+end
+
+function TimelineManager:deselectAllKeyframes()
+	for kfMarker in pairs(self.selectedKeyframes) do
+		if kfMarker and kfMarker.Parent then
+			kfMarker.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+			kfMarker.UIStroke.Enabled = false
+		end
+	end
+	self.selectedKeyframes = {}
+end
+
+function TimelineManager:addKeyframeToSelection(kfMarker)
+	if self.selectedKeyframes[kfMarker] then return end
+	self.selectedKeyframes[kfMarker] = true
+	kfMarker.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+	kfMarker.UIStroke.Enabled = true
+end
+
+function TimelineManager:deleteSelectedKeyframes()
+	local keyframesToDelete = {}
+	for kfMarker in pairs(self.selectedKeyframes) do
+		table.insert(keyframesToDelete, {
+			Track = kfMarker:GetAttribute("Track"),
+			PropName = kfMarker:GetAttribute("PropName"),
+			Time = kfMarker:GetAttribute("Time")
+		})
+	end
+
+	if #keyframesToDelete == 0 then return end
+
+	-- We need to group deletions by track and property for the history action
+	local groupedDeletions = {}
+	for _, data in ipairs(keyframesToDelete) do
+		if not groupedDeletions[data.Track] then groupedDeletions[data.Track] = {} end
+		if not groupedDeletions[data.Track][data.PropName] then groupedDeletions[data.Track][data.PropName] = {} end
+		table.insert(groupedDeletions[data.Track][data.PropName], data.Time)
+	end
+
+	local originalKeyframeData = {} -- For undo
+
+	local action = {
+		execute = function()
+			self:deselectAllKeyframes()
+			for track, props in pairs(groupedDeletions) do
+				originalKeyframeData[track] = {}
+				for propName, times in pairs(props) do
+					local originalKeyframes = track:GetAttribute(propName)
+					originalKeyframeData[track][propName] = originalKeyframes
+					local newKeyframes = {}
+					for _, kf in ipairs(originalKeyframes) do
+						if not table.find(times, kf.time) then
+							table.insert(newKeyframes, kf)
+						end
+					end
+					track:SetAttribute(propName, newKeyframes)
+					self.PropertiesManager.KeyframeChanged:Fire(track)
+				end
+			end
+		end,
+		undo = function()
+			for track, props in pairs(originalKeyframeData) do
+				for propName, originalKeyframes in pairs(props) do
+					track:SetAttribute(propName, originalKeyframes)
+					self.PropertiesManager.KeyframeChanged:Fire(track)
+				end
+			end
+		end
+	}
+	self.historyManager:registerAction(action)
 end
 
 function TimelineManager:getSelectedTracksTable()
@@ -544,6 +677,7 @@ function TimelineManager:redrawTimeline()
 			if startTime and duration then
 				child.Position = UDim2.new(0, startTime * self.PIXELS_PER_SECOND * self.zoom, 0, 0) -- Y is handled by layout
 				child.Size = UDim2.new(0, duration * self.PIXELS_PER_SECOND * self.zoom, 0, self.TRACK_HEIGHT)
+				self:_drawKeyframes(child)
 			end
 		end
 	end
@@ -616,10 +750,10 @@ function TimelineManager:createTrackFromPreset(presetName, time)
 end
 
 function TimelineManager:connectEvents()
-	self.ui.CopyButton.MouseButton1Click:Connect(function() self:copySelectedTracks() end)
-	self.ui.PasteButton.MouseButton1Click:Connect(function() self:pasteTracksAtTime(self.pasteTime) end)
+	table.insert(self.connections, self.ui.ContextMenu.CopyButton.MouseButton1Click:Connect(function() self:copySelectedTracks() end))
+	table.insert(self.connections, self.ui.ContextMenu.PasteButton.MouseButton1Click:Connect(function() self:pasteTracksAtTime(self.pasteTime) end))
 
-	self.ui.ClearAllButton.MouseButton1Click:Connect(function()
+	table.insert(self.connections, self.ui.ClearAllButton.MouseButton1Click:Connect(function()
 		UIManager.showConfirmationDialog(
 			self.ui,
 			"Clear Timeline",
@@ -628,22 +762,23 @@ function TimelineManager:connectEvents()
 				self:clearTimeline()
 			end
 		)
-	end)
+	end))
 
-	self.timeline.InputBegan:Connect(function(input)
+	table.insert(self.connections, self.timeline.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			self:deselectAllKeyframes()
 			self:deselectAllTracks()
 			self.TrackSelected:Fire({})
 		end
 
-		if input.UserInputType == Enum.UserInputType.MouseButton3 then -- Middle mouse for panning
-			self.isPanning = true
-			self.panStartPosition = Vector2.new(input.Position.X, input.Position.Y)
-			self.panStartCanvasPosition = self.timeline.CanvasPosition
-		end
+		if input.Position then
+			if input.UserInputType == Enum.UserInputType.MouseButton3 then -- Middle mouse for panning
+				self.isPanning = true
+				self.panStartPosition = Vector2.new(input.Position.X, input.Position.Y)
+				self.panStartCanvasPosition = self.timeline.CanvasPosition
+			end
 
-		self.ui.ContextMenu.Visible = false
-		if input.Position then -- Guard against non-mouse inputs
+			self.ui.ContextMenu.Visible = false
 			if self.drawingMode and input.UserInputType == Enum.UserInputType.MouseButton1 then
 				self.isDrawing = true
 				local mouseX = input.Position.X - self.timeline.AbsolutePosition.X
@@ -656,9 +791,9 @@ function TimelineManager:connectEvents()
 				self.pasteTime = relativeMouseX / (self.PIXELS_PER_SECOND * self.zoom)
 			end
 		end
-	end)
+	end))
 
-	self.timeline.InputChanged:Connect(function(input)
+	table.insert(self.connections, self.timeline.InputChanged:Connect(function(input)
 		if self.isPanning and input.UserInputType == Enum.UserInputType.MouseMovement then
 			if not input.Position then return end
 			local delta = input.Position.X - self.panStartPosition.X
@@ -676,9 +811,9 @@ function TimelineManager:connectEvents()
 				self.ghostTrack.Size = UDim2.new(0, width, 0, self.ghostTrack.Size.Y.Offset)
 			end
 		end
-	end)
+	end))
 
-	self.timeline.InputEnded:Connect(function(input)
+	table.insert(self.connections, self.timeline.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton3 then
 			self.isPanning = false
 		end
@@ -699,15 +834,19 @@ function TimelineManager:connectEvents()
 			end
 			self.drawingMode = nil
 		end
-	end)
+	end))
 
-	UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+	table.insert(self.connections, UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 		if not gameProcessedEvent and input.KeyCode == Enum.KeyCode.Delete then
-			self:deleteSelectedTracks()
+			if next(self.selectedKeyframes) then
+				self:deleteSelectedKeyframes()
+			else
+				self:deleteSelectedTracks()
+			end
 		end
-	end)
+	end))
 
-	UserInputService.InputChanged:Connect(function(input, gameProcessedEvent)
+	table.insert(self.connections, UserInputService.InputChanged:Connect(function(input, gameProcessedEvent)
 		if gameProcessedEvent then return end
 		if input.UserInputType == Enum.UserInputType.MouseWheel then
 			local isCtrlDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
@@ -723,7 +862,14 @@ function TimelineManager:connectEvents()
 				end
 			end
 		end
-	end)
+	end))
+end
+
+function TimelineManager:destroy()
+	for _, conn in ipairs(self.connections) do
+		conn:Disconnect()
+	end
+	self.connections = {}
 end
 
 return TimelineManager
