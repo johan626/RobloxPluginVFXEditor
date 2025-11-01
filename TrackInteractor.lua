@@ -363,5 +363,129 @@ function TrackInteractor:makeTrackInteractive(track)
 	createHandle("Left"); createHandle("Right")
 end
 
+function TrackInteractor:makeKeyframeInteractive(kfMarker)
+	local tm = self.timelineManager
+	local isDragging = false
+	local dragStartPos
+	local originalTimes = {} -- Store original times for all selected keyframes
+
+	kfMarker.MouseButton1Down:Connect(function(x, y)
+		local isCtrlDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+
+		-- If the clicked keyframe is not already selected (and ctrl is not held), deselect everything first
+		if not tm.selectedKeyframes[kfMarker] and not isCtrlDown then
+			tm:deselectAllKeyframes()
+		end
+		tm:addKeyframeToSelection(kfMarker)
+
+		isDragging = true
+		dragStartPos = Vector2.new(x, y)
+
+		-- Store original times for all selected keyframes
+		originalTimes = {}
+		for selectedKf in pairs(tm.selectedKeyframes) do
+			originalTimes[selectedKf] = selectedKf:GetAttribute("Time")
+		end
+	end)
+
+	kfMarker.InputChanged:Connect(function(input)
+		if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement and input.Position then
+			local deltaX = input.Position.X - dragStartPos.X
+
+			for selectedKf, originalTime in pairs(originalTimes) do
+				local track = selectedKf:GetAttribute("Track")
+				local duration = track:GetAttribute("Duration")
+				if duration > 0 then
+					local pixelsPerSecond = (track.AbsoluteSize.X / duration)
+
+					local newTime = originalTime + (deltaX / pixelsPerSecond)
+					newTime = math.clamp(newTime, 0, duration)
+
+					-- Snap to interval
+					newTime = math.floor(newTime / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
+
+					selectedKf.Position = UDim2.new(newTime / duration, 0, 0.5, 0)
+				end
+			end
+		end
+	end)
+
+	kfMarker.InputEnded:Connect(function(input)
+		if isDragging and input.UserInputType == Enum.UserInputType.MouseButton1 then
+			isDragging = false
+
+			-- Group updates by track and property name for the history action
+			local updates = {}
+
+			for selectedKf, originalTime in pairs(originalTimes) do
+				local track = selectedKf:GetAttribute("Track")
+				local propName = selectedKf:GetAttribute("PropName")
+				local duration = track:GetAttribute("Duration")
+				local newTime = selectedKf.Position.X.Scale * duration
+
+				if newTime ~= originalTime then
+					if not updates[track] then updates[track] = {} end
+					if not updates[track][propName] then updates[track][propName] = {} end
+					table.insert(updates[track][propName], { oldTime = originalTime, newTime = newTime })
+				end
+			end
+
+			if next(updates) == nil then return end -- No changes were made
+
+			local originalKeyframeData = {}
+			local newKeyframeData = {}
+
+			local action = {
+				execute = function()
+					for track, props in pairs(updates) do
+						newKeyframeData[track] = {}
+						for propName, timeChanges in pairs(props) do
+							local keyframes = track:GetAttribute(propName)
+							originalKeyframeData[track] = originalKeyframeData[track] or {}
+							originalKeyframeData[track][propName] = keyframes -- Save original state for undo
+
+							local tempKeyframes = {}
+							local kfsToUpdate = {}
+
+							for _, kf in ipairs(keyframes) do
+								local foundChange = false
+								for _, change in ipairs(timeChanges) do
+									if kf.time == change.oldTime then
+										kfsToUpdate[change.newTime] = kf
+										foundChange = true
+										break
+									end
+								end
+								if not foundChange then
+									table.insert(tempKeyframes, kf)
+								end
+							end
+
+							for newTime, kf in pairs(kfsToUpdate) do
+								kf.time = newTime
+								table.insert(tempKeyframes, kf)
+							end
+
+							table.sort(tempKeyframes, function(a, b) return a.time < b.time end)
+							newKeyframeData[track][propName] = tempKeyframes
+							track:SetAttribute(propName, tempKeyframes)
+							tm.PropertiesManager.KeyframeChanged:Fire(track)
+						end
+					end
+				end,
+				undo = function()
+					for track, props in pairs(originalKeyframeData) do
+						for propName, keyframes in pairs(props) do
+							track:SetAttribute(propName, keyframes)
+							tm.PropertiesManager.KeyframeChanged:Fire(track)
+						end
+					end
+				end
+			}
+			self.historyManager:registerAction(action)
+		end
+	end)
+end
+
 
 return TrackInteractor
