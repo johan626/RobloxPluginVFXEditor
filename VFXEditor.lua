@@ -35,8 +35,9 @@ local historyManager = HistoryManager.new()
 
 -- Decoupled Initialization to prevent circular dependency
 local previewManager = PreviewManager.new(ui)
-local timelineManager = TimelineManager.new(ui, previewManager.playhead, historyManager) -- Pass the playhead UI object, not the manager
+local timelineManager = TimelineManager.new(ui, previewManager.playhead, historyManager, PropertiesManager)
 previewManager:setTimelineManager(timelineManager) -- Now inject the dependency
+previewManager:setPropertiesManager(PropertiesManager)
 
 local dataManager = DataManager.new(plugin, timelineManager, ui) -- Pass UI to DataManager
 local componentDragger = ComponentDragger.new(ui)
@@ -63,7 +64,7 @@ end
 historyManager.HistoryChanged:Connect(updateHistoryButtons)
 
 timelineManager.TrackSelected:Connect(function(selectedTracks)
-	PropertiesManager.populate(ui.PropertiesPanel, selectedTracks, timelineManager)
+	PropertiesManager.populate(ui.PropertiesPanel, selectedTracks, timelineManager, previewManager)
 end)
 
 timelineManager.TrackDeleted:Connect(function()
@@ -105,7 +106,7 @@ end)
 
 ui.ExportButton.MouseButton1Click:Connect(function()
 	local selected = Selection:Get()
-	if selected and #selected > 0 then Exporter.export(timelineManager.timeline, selected[1]) else warn("Please select a VFX Container to export to.") end
+	if selected and #selected > 0 then Exporter.export(timelineManager, selected[1]) else warn("Please select a VFX Container to export to.") end
 end)
 
 ui.SaveButton.MouseButton1Click:Connect(function()
@@ -163,6 +164,8 @@ vfxEditorWidget:GetPropertyChangedSignal("Enabled"):Connect(function()
 			userInputConnection:Disconnect()
 			userInputConnection = nil
 		end
+		-- Destroy the manager to clean up its connections
+		timelineManager:destroy()
 	end
 end)
 
