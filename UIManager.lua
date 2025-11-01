@@ -292,4 +292,30 @@ function UIManager.createUI(widget)
 	return ui
 end
 
+function UIManager.showConfirmationDialog(ui, title, message, onConfirm)
+	ui.DialogTitle.Text = title
+	ui.DialogMessage.Text = message
+	ui.ConfirmationDialog.Visible = true
+
+	-- This is tricky because we can't easily store the connections.
+	-- For this specific case, we can connect/disconnect inside the handlers.
+	-- A more robust system would use a dedicated signal library.
+	local confirmConn, cancelConn
+
+	local function cleanup()
+		confirmConn:Disconnect()
+		cancelConn:Disconnect()
+		ui.ConfirmationDialog.Visible = false
+	end
+
+	confirmConn = ui.ConfirmButton.MouseButton1Click:Connect(function()
+		cleanup()
+		if onConfirm then onConfirm() end
+	end)
+
+	cancelConn = ui.CancelButton.MouseButton1Click:Connect(function()
+		cleanup()
+	end)
+end
+
 return UIManager
