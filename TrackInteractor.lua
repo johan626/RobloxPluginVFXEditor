@@ -1,321 +1,491 @@
--- UIManager.lua (ModuleScript)
--- Path: ServerScriptService/VFXEditor/UIManager.lua
+-- TrackInteractor.lua (ModuleScript)
+-- Handles all user input and interaction with individual tracks on the timeline.
 
 local Config = require(script.Parent.Config)
-local UIManager = {}
+local UserInputService = game:GetService("UserInputService")
 
--- Fungsi Bantuan untuk Gaya UI
-local function styleButton(button, isEnabled)
-	if isEnabled == nil then isEnabled = true end
-	local theme = Config.Theme
+local TrackInteractor = {}
+TrackInteractor.__index = TrackInteractor
 
-	button.Font = theme.Font
-	button.TextSize = theme.FontSize
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 4)
-	corner.Parent = button
+function TrackInteractor.new(timelineManager, ui, playhead, historyManager)
+	local self = setmetatable({}, TrackInteractor)
 
-	if isEnabled then
-		button.BackgroundColor3 = theme.Button
-		button.TextColor3 = theme.Text
-		button.AutoButtonColor = false
-		button.MouseEnter:Connect(function() button.BackgroundColor3 = theme.ButtonHover end)
-		button.MouseLeave:Connect(function() button.BackgroundColor3 = theme.Button end)
-		button.MouseButton1Down:Connect(function() button.BackgroundColor3 = theme.ButtonPressed end)
-		button.MouseButton1Up:Connect(function() button.BackgroundColor3 = theme.ButtonHover end)
-	else
-		button.BackgroundColor3 = theme.ButtonDisabled
-		button.TextColor3 = theme.TextDisabled
-		button.AutoButtonColor = false
-	end
+	self.timelineManager = timelineManager
+	self.ui = ui
+	self.timeline = ui.Timeline
+	self.playhead = playhead
+	self.historyManager = historyManager
+
+	-- Constants from timelineManager
+	self.DOUBLE_CLICK_SPEED = 0.25
+	self.PLAYHEAD_SNAP_DISTANCE = 10
+	self.SNAP_INTERVAL = 0.1
+	self.PIXELS_PER_SECOND = 200
+	self.TRACK_HEIGHT = 20
+	self.LANE_PADDING = 5
+
+	self.lastClickTime = 0
+	self.lastClickedTrack = nil
+
+	return self
 end
 
-function UIManager.createUI(widget)
-	local ui = {}
-	local theme = Config.Theme
+function TrackInteractor:makeTrackInteractive(track)
+	local tm = self.timelineManager -- Alias for easier access
 
-	-- Signals
-	ui.GroupColorChanged = {}
-	function ui.GroupColorChanged:Connect(callback) table.insert(self, callback) end
-	function ui.GroupColorChanged:Fire(...) for _, cb in ipairs(self) do cb(...) end end
+	local outline = Instance.new("UIStroke"); outline.Name = "SelectionOutline"; outline.Color = Color3.fromRGB(255, 255, 0); outline.Thickness = 2; outline.Enabled = false; outline.Parent = track
+	local trackLabel = track:FindFirstChild("TrackLabel")
+	local lockButton = track:FindFirstChild("LockButton")
+	local muteButton = track:FindFirstChild("MuteButton")
+	local soloButton = track:FindFirstChild("SoloButton")
 
-	-- Main UI Structure
-	ui.MainFrame = Instance.new("Frame")
-	ui.MainFrame.Name = "MainFrame"
-	ui.MainFrame.Size = UDim2.new(1, 0, 1, 0)
-	ui.MainFrame.BackgroundColor3 = theme.Background
-	ui.MainFrame.Parent = widget
+	lockButton.MouseButton1Click:Connect(function()
+		local isLocked = not track:GetAttribute("IsLocked")
+		tm:setTrackLockState({track}, isLocked)
+	end)
 
-	-- Top Bar for controls
-	ui.TopBar = Instance.new("Frame")
-	ui.TopBar.Name = "TopBar"
-	ui.TopBar.Size = UDim2.new(1, 0, 0, 36)
-	ui.TopBar.BackgroundColor3 = theme.TopBar
-	ui.TopBar.Parent = ui.MainFrame
-	local topBarPadding = Instance.new("UIPadding")
-	topBarPadding.PaddingLeft = UDim.new(0, 8)
-	topBarPadding.PaddingRight = UDim.new(0, 8)
-	topBarPadding.Parent = ui.TopBar
+	muteButton.MouseButton1Click:Connect(function()
+		tm:_toggleMute(track)
+	end)
 
-	local topBarLayout = Instance.new("UIListLayout")
-	topBarLayout.FillDirection = Enum.FillDirection.Horizontal
-	topBarLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	topBarLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right -- Align container frames
-	topBarLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	topBarLayout.Parent = ui.TopBar
+	soloButton.MouseButton1Click:Connect(function()
+		tm:_toggleSolo(track)
+	end)
 
-	-- Left Aligned Buttons Container
-	local leftFrame = Instance.new("Frame")
-	leftFrame.Name = "LeftFrame"
-	leftFrame.BackgroundTransparency = 1
-	leftFrame.Size = UDim2.new(1, -368, 1, 0) -- Fill remaining space
-	leftFrame.LayoutOrder = 1
-	leftFrame.Parent = ui.TopBar
-	local leftLayout = Instance.new("UIListLayout")
-	leftLayout.FillDirection = Enum.FillDirection.Horizontal
-	leftLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
-	leftLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	leftLayout.Padding = UDim.new(0, 6)
-	leftLayout.Parent = leftFrame
-
-	-- Center Aligned Buttons Container
-	local centerFrame = Instance.new("Frame")
-	centerFrame.Name = "CenterFrame"
-	centerFrame.BackgroundTransparency = 1
-	centerFrame.Size = UDim2.new(0, 120, 1, 0)
-	centerFrame.LayoutOrder = 2
-	centerFrame.Parent = ui.TopBar
-	local centerLayout = Instance.new("UIListLayout")
-	centerLayout.FillDirection = Enum.FillDirection.Horizontal
-	centerLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	centerLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	centerLayout.Padding = UDim.new(0, 6)
-	centerLayout.Parent = centerFrame
-
-	-- Right Aligned Buttons Container
-	local rightFrame = Instance.new("Frame")
-	rightFrame.Name = "RightFrame"
-	rightFrame.BackgroundTransparency = 1
-	rightFrame.Size = UDim2.new(0, 248, 1, 0)
-	rightFrame.LayoutOrder = 3
-	rightFrame.Parent = ui.TopBar
-	local rightLayout = Instance.new("UIListLayout")
-	rightLayout.FillDirection = Enum.FillDirection.Horizontal
-	rightLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
-	rightLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	rightLayout.Padding = UDim.new(0, 6)
-	rightLayout.Parent = rightFrame
-
-	-- Shared Button Size
-	local BTN_HEIGHT = 28
-
-	-- Undo/Redo Buttons (Left Frame)
-	ui.UndoButton = Instance.new("TextButton")
-	ui.UndoButton.Name = "UndoButton"; ui.UndoButton.Size = UDim2.new(0, 60, 0, BTN_HEIGHT); ui.UndoButton.Text = "Undo"; ui.UndoButton.Parent = leftFrame
-	styleButton(ui.UndoButton, false); ui.UndoButton.Active = false
-
-	ui.RedoButton = Instance.new("TextButton")
-	ui.RedoButton.Name = "RedoButton"; ui.RedoButton.Size = UDim2.new(0, 60, 0, BTN_HEIGHT); ui.RedoButton.Text = "Redo"; ui.RedoButton.Parent = leftFrame
-	styleButton(ui.RedoButton, false); ui.RedoButton.Active = false
-
-	ui.CreateVFXButton = Instance.new("TextButton")
-	ui.CreateVFXButton.Name = "CreateNewVFXButton"; ui.CreateVFXButton.Size = UDim2.new(0, 120, 0, BTN_HEIGHT); ui.CreateVFXButton.Text = "Create New VFX"; ui.CreateVFXButton.Parent = leftFrame
-	styleButton(ui.CreateVFXButton)
-
-	-- Play/Stop Buttons (Center Frame)
-	ui.PlayButton = Instance.new("TextButton")
-	ui.PlayButton.Name = "PlayButton"; ui.PlayButton.Size = UDim2.new(0, 50, 0, BTN_HEIGHT); ui.PlayButton.Text = "Play"; ui.PlayButton.Parent = centerFrame
-	styleButton(ui.PlayButton)
-
-	ui.StopButton = Instance.new("TextButton")
-	ui.StopButton.Name = "StopButton"; ui.StopButton.Size = UDim2.new(0, 50, 0, BTN_HEIGHT); ui.StopButton.Text = "Stop"; ui.StopButton.Parent = centerFrame
-	styleButton(ui.StopButton)
-
-	-- Save/Load/Export Buttons (Right Frame)
-	ui.SaveButton = Instance.new("TextButton")
-	ui.SaveButton.Name = "SaveButton"; ui.SaveButton.Size = UDim2.new(0, 50, 0, BTN_HEIGHT); ui.SaveButton.Text = "Save"; ui.SaveButton.Parent = rightFrame
-	styleButton(ui.SaveButton)
-
-	ui.LoadButton = Instance.new("TextButton")
-	ui.LoadButton.Name = "LoadButton"; ui.LoadButton.Size = UDim2.new(0, 50, 0, BTN_HEIGHT); ui.LoadButton.Text = "Load"; ui.LoadButton.Parent = rightFrame
-	styleButton(ui.LoadButton, false); ui.LoadButton.Active = false
-
-	ui.ExportButton = Instance.new("TextButton")
-	ui.ExportButton.Name = "ExportButton"; ui.ExportButton.Size = UDim2.new(0, 60, 0, BTN_HEIGHT); ui.ExportButton.Text = "Export"; ui.ExportButton.Parent = rightFrame
-	styleButton(ui.ExportButton)
-
-	ui.ClearAllButton = Instance.new("TextButton")
-	ui.ClearAllButton.Name = "ClearAllButton"; ui.ClearAllButton.Size = UDim2.new(0, 70, 0, BTN_HEIGHT); ui.ClearAllButton.Text = "Clear All"; ui.ClearAllButton.Parent = rightFrame
-	styleButton(ui.ClearAllButton); ui.ClearAllButton.BackgroundColor3 = theme.AccentDestructive
-
-	-- Content Area & Panels
-	local contentArea = Instance.new("Frame")
-	contentArea.Name = "ContentArea"; contentArea.Size = UDim2.new(1, 0, 1, -36); contentArea.Position = UDim2.new(0, 0, 0, 36); contentArea.Parent = ui.MainFrame
-
-	-- New Component Library Panel (Left)
-	ui.ComponentLibrary = Instance.new("ScrollingFrame")
-	ui.ComponentLibrary.Name = "ComponentLibrary"; ui.ComponentLibrary.Size = UDim2.new(0.15, 0, 1, 0); ui.ComponentLibrary.Position = UDim2.new(0, 0, 0, 0); ui.ComponentLibrary.BackgroundColor3 = theme.ComponentLibrary; ui.ComponentLibrary.BorderSizePixel = 0; ui.ComponentLibrary.ScrollBarThickness = 8; ui.ComponentLibrary.ScrollBarImageColor3 = theme.ButtonAccent; ui.ComponentLibrary.Parent = contentArea
-	local libPadding = Instance.new("UIPadding"); libPadding.PaddingLeft = UDim.new(0, 8); libPadding.PaddingRight = UDim.new(0, 8); libPadding.PaddingTop = UDim.new(0, 8); libPadding.PaddingBottom = UDim.new(0, 8); libPadding.Parent = ui.ComponentLibrary
-	local libLayout = Instance.new("UIListLayout"); libLayout.Padding = UDim.new(0, 5); libLayout.SortOrder = Enum.SortOrder.LayoutOrder; libLayout.Parent = ui.ComponentLibrary
-
-	-- Timeline Panel (Center)
-	ui.Timeline = Instance.new("ScrollingFrame")
-	ui.Timeline.Name = "Timeline"; ui.Timeline.Size = UDim2.new(0.65, 0, 1, 0); ui.Timeline.Position = UDim2.new(0.15, 0, 0, 0); ui.Timeline.BackgroundColor3 = theme.Timeline; ui.Timeline.CanvasSize = UDim2.new(5, 0, 1, 0); ui.Timeline.ScrollBarThickness = 8; ui.Timeline.Parent = contentArea
-
-	-- Properties Panel (Right)
-	ui.PropertiesPanel = Instance.new("ScrollingFrame")
-	ui.PropertiesPanel.Name = "PropertiesPanel"; ui.PropertiesPanel.Size = UDim2.new(0.2, 0, 1, 0); ui.PropertiesPanel.Position = UDim2.new(0.8, 0, 0, 0); ui.PropertiesPanel.BackgroundColor3 = theme.Properties; ui.PropertiesPanel.BorderSizePixel = 0; ui.PropertiesPanel.ScrollBarThickness = 8; ui.PropertiesPanel.ScrollBarImageColor3 = theme.ButtonAccent; ui.PropertiesPanel.Parent = contentArea
-	local propsPadding = Instance.new("UIPadding"); propsPadding.PaddingLeft = UDim.new(0, 8); propsPadding.PaddingRight = UDim.new(0, 8); propsPadding.PaddingTop = UDim.new(0, 8); propsPadding.PaddingBottom = UDim.new(0, 8); propsPadding.Parent = ui.PropertiesPanel
-
-	-- Populate Component Library
-	local componentCategories = {
-		{Name = "Lights", Items = {"Light", "SpotLight", "SurfaceLight"}},
-		{Name = "Emitters", Items = {"Particle", "Beam", "Trail"}},
-		{Name = "Audio", Items = {"Sound"}},
-		{Name = "Presets", Items = {"Fire", "Smoke", "Explosion"}, Preset = true}
-	}
-
-	for _, category in ipairs(componentCategories) do
-		local header = Instance.new("TextLabel")
-		header.LayoutOrder = #ui.ComponentLibrary:GetChildren()
-		header.Size = UDim2.new(1, 0, 0, 20)
-		header.Text = category.Name
-		header.BackgroundColor3 = theme.ButtonAccent
-		header.TextColor3 = theme.Text
-		header.Font = Enum.Font.SourceSansBold
-		header.TextXAlignment = Enum.TextXAlignment.Left
-		header.Parent = ui.ComponentLibrary
-
-		for _, itemName in ipairs(category.Items) do
-			local button = Instance.new("TextButton")
-			button.Name = "ComponentDraggable"
-			button.LayoutOrder = #ui.ComponentLibrary:GetChildren()
-			button.Size = UDim2.new(1, 0, 0, 28)
-			button.Text = "  " .. itemName
-			button:SetAttribute("ComponentType", itemName)
-			button:SetAttribute("IsPreset", category.Preset or false)
-			button.Parent = ui.ComponentLibrary
-			styleButton(button)
+	track.MouseButton1Down:Connect(function()
+		-- Allow selection of locked tracks, but nothing else.
+		local isLocked = track:GetAttribute("IsLocked")
+		if isLocked then
+			tm:deselectAllTracks()
+			tm:addTrackToSelection(track)
+			tm.TrackSelected:Fire(tm.selectedTracks)
+			return
 		end
-	end
 
-	ui.ConfirmationDialog = Instance.new("Frame")
-	ui.ConfirmationDialog.Name = "ConfirmationDialog"; ui.ConfirmationDialog.Size = UDim2.new(1, 0, 1, 0); ui.ConfirmationDialog.Position = UDim2.new(0, 0, 0, 0); ui.ConfirmationDialog.BackgroundColor3 = Color3.fromRGB(0, 0, 0); ui.ConfirmationDialog.BackgroundTransparency = 0.5; ui.ConfirmationDialog.Visible = false; ui.ConfirmationDialog.ZIndex = 10; ui.ConfirmationDialog.Parent = ui.MainFrame
-	local dialog = Instance.new("Frame"); dialog.Name = "Dialog"; dialog.Size = UDim2.new(0, 400, 0, 150); dialog.Position = UDim2.new(0.5, -200, 0.5, -75); dialog.BackgroundColor3 = theme.TopBar; dialog.Parent = ui.ConfirmationDialog
-	local dialogCorner = Instance.new("UICorner"); dialogCorner.CornerRadius = UDim.new(0, 4); dialogCorner.Parent = dialog
-	ui.DialogTitle = Instance.new("TextLabel"); ui.DialogTitle.Name = "Title"; ui.DialogTitle.Size = UDim2.new(1, 0, 0, 40); ui.DialogTitle.Text = "Confirm Action"; ui.DialogTitle.TextColor3 = theme.Text; ui.DialogTitle.Font = Enum.Font.SourceSansBold; ui.DialogTitle.TextSize = 16; ui.DialogTitle.BackgroundColor3 = theme.Background; ui.DialogTitle.Parent = dialog
-	ui.DialogMessage = Instance.new("TextLabel"); ui.DialogMessage.Name = "Message"; ui.DialogMessage.Size = UDim2.new(1, -20, 0, 60); ui.DialogMessage.Position = UDim2.new(0, 10, 0, 40); ui.DialogMessage.Text = "Are you sure?"; ui.DialogMessage.TextColor3 = theme.Text; ui.DialogMessage.TextWrapped = true; ui.DialogMessage.BackgroundTransparency = 1; ui.DialogMessage.Parent = dialog
-	ui.ConfirmButton = Instance.new("TextButton"); ui.ConfirmButton.Name = "ConfirmButton"; ui.ConfirmButton.Size = UDim2.new(0, 100, 0, 30); ui.ConfirmButton.Position = UDim2.new(0.5, -110, 1, -40); ui.ConfirmButton.Text = "Confirm"; ui.ConfirmButton.Parent = dialog; styleButton(ui.ConfirmButton)
-	ui.CancelButton = Instance.new("TextButton"); ui.CancelButton.Name = "CancelButton"; ui.CancelButton.Size = UDim2.new(0, 100, 0, 30); ui.CancelButton.Position = UDim2.new(0.5, 10, 1, -40); ui.CancelButton.Text = "Cancel"; ui.CancelButton.Parent = dialog; styleButton(ui.CancelButton)
+		self.ui.ContextMenu.Visible = false
+		local currentTime = tick()
 
-	-- Context Menu
-	ui.ContextMenu = Instance.new("Frame"); ui.ContextMenu.Name = "ContextMenu"; ui.ContextMenu.Size = UDim2.new(0, 150, 0, 90); ui.ContextMenu.BackgroundColor3 = theme.TopBar; ui.ContextMenu.BorderSizePixel = 1; ui.ContextMenu.BorderColor3 = theme.Background; ui.ContextMenu.Visible = false; ui.ContextMenu.ZIndex = 20; ui.ContextMenu.Parent = ui.MainFrame
-	local contextCorner = Instance.new("UICorner"); contextCorner.CornerRadius = UDim.new(0, 4); contextCorner.Parent = ui.ContextMenu
-	local contextLayout = Instance.new("UIListLayout"); contextLayout.Padding = UDim.new(0, 4); contextLayout.SortOrder = Enum.SortOrder.LayoutOrder; contextLayout.Parent = ui.ContextMenu
-	local contextPadding = Instance.new("UIPadding"); contextPadding.PaddingLeft = UDim.new(0, 4); contextPadding.PaddingRight = UDim.new(0, 4); contextPadding.PaddingTop = UDim.new(0, 4); contextPadding.PaddingBottom = UDim.new(0, 4); contextPadding.Parent = ui.ContextMenu
+		if (currentTime - self.lastClickTime) < self.DOUBLE_CLICK_SPEED and self.lastClickedTrack == track then
+			-- Double click detected
+			self.lastClickTime = 0 -- Reset to prevent triple-click
 
-	ui.CopyButton = Instance.new("TextButton"); ui.CopyButton.Name = "CopyButton"; ui.CopyButton.LayoutOrder = 1; ui.CopyButton.Size = UDim2.new(1, 0, 0, 28); ui.CopyButton.Text = "Copy"; ui.CopyButton.Parent = ui.ContextMenu; styleButton(ui.CopyButton)
-	ui.PasteButton = Instance.new("TextButton"); ui.PasteButton.Name = "PasteButton"; ui.PasteButton.LayoutOrder = 2; ui.PasteButton.Size = UDim2.new(1, 0, 0, 28); ui.PasteButton.Text = "Paste"; ui.PasteButton.Parent = ui.ContextMenu; styleButton(ui.PasteButton)
-	ui.SetGroupColorButton = Instance.new("TextButton"); ui.SetGroupColorButton.Name = "SetGroupColorButton"; ui.SetGroupColorButton.LayoutOrder = 3; ui.SetGroupColorButton.Size = UDim2.new(1, 0, 0, 28); ui.SetGroupColorButton.Text = "Set Group Color  >"; ui.SetGroupColorButton.Parent = ui.ContextMenu; styleButton(ui.SetGroupColorButton)
+			local editBox = Instance.new("TextBox")
+			editBox.Size = UDim2.new(1, 0, 1, 0)
+			editBox.Position = UDim2.new(0, 0, 0, 0)
+			editBox.BackgroundColor3 = Config.Theme.Background
+			editBox.TextColor3 = Config.Theme.Text
+			editBox.Font = Config.Theme.Font
+			editBox.Text = trackLabel.Text
+			editBox.TextXAlignment = Enum.TextXAlignment.Left
+			editBox.Parent = trackLabel
+			editBox:CaptureFocus()
 
-	-- Sub-menu for group colors
-	ui.GroupColorSubMenu = Instance.new("Frame")
-	ui.GroupColorSubMenu.Name = "GroupColorSubMenu"
-	ui.GroupColorSubMenu.Size = UDim2.new(0, 150, 0, 120)
-	ui.GroupColorSubMenu.Position = UDim2.new(1, 2, 0, 0)
-	ui.GroupColorSubMenu.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-	ui.GroupColorSubMenu.BorderSizePixel = 1
-	ui.GroupColorSubMenu.BorderColor3 = Color3.fromRGB(100,100,100)
-	ui.GroupColorSubMenu.Visible = false
-	ui.GroupColorSubMenu.ZIndex = 21
-	ui.GroupColorSubMenu.Parent = ui.ContextMenu
-	local groupColorCorner = Instance.new("UICorner"); groupColorCorner.CornerRadius = UDim.new(0, 4); groupColorCorner.Parent = ui.GroupColorSubMenu
-	local colorGridLayout = Instance.new("UIGridLayout")
-	colorGridLayout.CellPadding = UDim2.new(0, 4, 0, 4)
-	colorGridLayout.CellSize = UDim2.new(0, 24, 0, 24)
-	colorGridLayout.Parent = ui.GroupColorSubMenu
-
-	ui.GroupColorButtons = {}
-	for colorName, colorValue in pairs(Config.GroupColors) do
-		local button = Instance.new("TextButton")
-		button.Name = colorName .. "ColorButton"
-		button.Size = UDim2.new(0, 24, 0, 24)
-		button.BackgroundColor3 = colorValue
-		button.Text = ""
-		button.Parent = ui.GroupColorSubMenu
-		local corner = Instance.new("UICorner"); corner.Parent = button
-
-		button.MouseButton1Click:Connect(function()
-			ui.GroupColorChanged:Fire(colorValue)
-			ui.ContextMenu.Visible = false
-		end)
-		ui.GroupColorButtons[colorName] = button
-	end
-
-	-- Logic to show/hide the sub-menus with debounce
-	local activeSubMenu = nil
-	local hideSubMenuTask = nil
-	local function cancelHide()
-		if hideSubMenuTask then
-			task.cancel(hideSubMenuTask)
-			hideSubMenuTask = nil
+			editBox.FocusLost:Connect(function(enterPressed)
+				if enterPressed then
+					tm:setTrackLabel(track, editBox.Text)
+				end
+				editBox:Destroy()
+			end)
+			return -- End early to not trigger selection
 		end
-	end
-	local function scheduleHide()
-		cancelHide()
-		hideSubMenuTask = task.delay(0.1, function()
-			if activeSubMenu then
-				activeSubMenu.Visible = false
-				activeSubMenu = nil
+
+		self.lastClickTime = currentTime
+		self.lastClickedTrack = track
+
+		local isCtrlDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+		if isCtrlDown then
+			if tm.selectedTracks[track] then tm:removeTrackFromSelection(track) else tm:addTrackToSelection(track) end
+		else
+			if not tm.selectedTracks[track] then tm:deselectAllTracks(); tm:addTrackToSelection(track) end
+		end
+		tm.TrackSelected:Fire(tm.selectedTracks)
+	end)
+
+	track.MouseButton2Down:Connect(function(x, y)
+		if track:GetAttribute("IsLocked") then return end
+		if not tm.selectedTracks[track] then tm:deselectAllTracks(); tm:addTrackToSelection(track); tm.TrackSelected:Fire(tm.selectedTracks) end
+		local relativeMouseX = x - self.timeline.AbsolutePosition.X + self.timeline.CanvasPosition.X
+		tm.pasteTime = relativeMouseX / (self.PIXELS_PER_SECOND * tm.zoom)
+		tm:showContextMenu(x, y, {showCopy = true, showPaste = tm.copiedTracksData ~= nil, showCreate = true})
+	end)
+
+	local dragging, dragStart, originalStates = false, 0, {}
+	local dragMode = nil -- "Horizontal" or "Vertical"
+	local dragThreshold = 5 -- pixels
+	local dropIndicator = Instance.new("Frame")
+	dropIndicator.Size = UDim2.new(1, 0, 0, 2)
+	dropIndicator.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+	dropIndicator.BorderSizePixel = 0
+	dropIndicator.Visible = false
+	dropIndicator.ZIndex = 100
+	dropIndicator.Parent = self.timeline
+
+	track.InputBegan:Connect(function(input)
+		if track:GetAttribute("IsLocked") then return end
+		if input.UserInputType == Enum.UserInputType.MouseButton1 and input.Position then
+			-- Guard against clicks on the lock button starting a drag
+			if input.UserInputState == Enum.UserInputState.Begin and input.Position.X < track.AbsolutePosition.X + 70 then return end
+
+			dragging = true
+			dragStart = input.Position
+			originalStates = {}
+			for t in pairs(tm.selectedTracks) do
+				originalStates[t] = {
+					Position = t.Position, 
+					StartTime = t:GetAttribute("StartTime"),
+					LayoutOrder = t.LayoutOrder
+				}
 			end
-			hideSubMenuTask = nil
+		end
+	end)
+
+	track.InputChanged:Connect(function(input)
+		if not dragging or input.UserInputType ~= Enum.UserInputType.MouseMovement or not input.Position then return end
+
+		local delta = input.Position - dragStart
+
+		if not dragMode then
+			if #tm:getSelectedTracksTable() == 1 and math.abs(delta.Y) > dragThreshold and math.abs(delta.Y) > math.abs(delta.X) then
+				dragMode = "Vertical"
+			elseif math.abs(delta.X) > dragThreshold then
+				dragMode = "Horizontal"
+			end
+		end
+
+		if dragMode == "Horizontal" then
+			for t, state in pairs(originalStates) do
+				t.Position = UDim2.new(0, state.Position.X.Offset + delta.X, 0, t.Position.Y.Offset)
+			end
+			if math.abs(track.Position.X.Offset - self.playhead.Position.X.Offset) < self.PLAYHEAD_SNAP_DISTANCE then
+				self.playhead.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+			else
+				self.playhead.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+			end
+		elseif dragMode == "Vertical" then
+			local mouseY = input.Position.Y
+			local targetTrack, targetY = nil, -1
+
+			-- Find which track we are hovering over
+			for _, child in ipairs(self.timeline:GetChildren()) do
+				if child:IsA("GuiObject") and child.Name == "TimelineTrack" and child ~= track then
+					local top = child.AbsolutePosition.Y
+					local bottom = top + child.AbsoluteSize.Y
+					if mouseY >= top and mouseY <= bottom then
+						targetTrack = child
+						-- Decide if we are above or below the midpoint
+						if mouseY < top + child.AbsoluteSize.Y / 2 then
+							targetY = top - self.LANE_PADDING / 2
+						else
+							targetY = bottom + self.LANE_PADDING / 2
+						end
+						break
+					end
+				end
+			end
+
+			if targetTrack then
+				dropIndicator.Visible = true
+				dropIndicator.Position = UDim2.fromOffset(0, targetY - self.timeline.AbsolutePosition.Y)
+
+				-- Temporarily move the dragged tracks to visualize the drop
+				local i = 0
+				for t, _ in pairs(tm.selectedTracks) do
+					t.Parent = nil -- This removes it from the UIListLayout's control
+					local yOffset = input.Position.Y - self.timeline.AbsolutePosition.Y - track.AbsoluteSize.Y / 2 + (i * (self.TRACK_HEIGHT + self.LANE_PADDING))
+					t.Position = UDim2.fromOffset(t.Position.X.Offset, yOffset)
+					t.Parent = self.timeline
+					i = i + 1
+				end
+			else
+				dropIndicator.Visible = false
+			end
+		end
+	end)
+
+	track.InputEnded:Connect(function(input)
+		if not dragging or input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+		dragging = false
+		dropIndicator.Visible = false
+
+		if dragMode == "Vertical" then
+			-- Finalize vertical reordering
+			local mouseY = input.Position.Y
+			local targetOrder = -1
+
+			-- Find where to drop it
+			for _, child in ipairs(self.timeline:GetChildren()) do
+				if child:IsA("GuiObject") and child.Name == "TimelineTrack" and child ~= track then
+					if mouseY < child.AbsolutePosition.Y + child.AbsoluteSize.Y / 2 then
+						targetOrder = child.LayoutOrder
+						break
+					else
+						targetOrder = child.LayoutOrder + 1
+					end
+				end
+			end
+
+			if targetOrder ~= -1 then
+				local finalOrders = {}
+				if targetOrder > track.LayoutOrder then
+					targetOrder = targetOrder - 1
+				end
+
+				local otherTracks = {}
+				for _, child in ipairs(self.timeline:GetChildren()) do
+					if child:IsA("GuiObject") and child.Name == "TimelineTrack" and child ~= track then
+						table.insert(otherTracks, child)
+					end
+				end
+				table.sort(otherTracks, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+
+				local newOrder = 1
+				for _, otherTrack in ipairs(otherTracks) do
+					if newOrder == targetOrder then
+						newOrder = newOrder + 1
+					end
+					finalOrders[otherTrack] = newOrder
+					newOrder = newOrder + 1
+				end
+				finalOrders[track] = targetOrder
+
+				local action = {
+					execute = function()
+						for t, order in pairs(finalOrders) do
+							t.LayoutOrder = order
+							t:SetAttribute("LayoutOrder", order)
+						end
+					end,
+					undo = function()
+						for t, state in pairs(originalStates) do
+							t.LayoutOrder = state.LayoutOrder
+							t:SetAttribute("LayoutOrder", state.LayoutOrder)
+						end
+					end
+				}
+				self.historyManager:registerAction(action)
+			end
+			-- Restore position after drag ends
+			for t, state in pairs(originalStates) do
+				t.Position = UDim2.fromOffset(state.Position.X.Offset, t.Position.Y.Offset)
+			end
+		elseif dragMode == "Horizontal" then
+			self.playhead.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+
+			-- This is the existing horizontal move logic
+			local finalStates = {}
+			local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * tm.zoom
+			local primaryTrackPos = track.Position.X.Offset
+			local finalPrimaryPos
+
+			if math.abs(primaryTrackPos - self.playhead.Position.X.Offset) < self.PLAYHEAD_SNAP_DISTANCE then
+				finalPrimaryPos = self.playhead.Position.X.Offset
+			else
+				local snappedStart = math.floor((primaryTrackPos / zoomedPixelsPerSecond) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
+				finalPrimaryPos = snappedStart * zoomedPixelsPerSecond
+			end
+
+			local finalDelta = finalPrimaryPos - originalStates[track].Position.X.Offset
+			for t, state in pairs(originalStates) do
+				local newPos = state.Position.X.Offset + finalDelta
+				finalStates[t] = {Position = UDim2.new(0, newPos, 0, t.Position.Y.Offset), StartTime = newPos / zoomedPixelsPerSecond}
+			end
+
+			local action = {
+				execute = function() for t, s in pairs(finalStates) do t.Position = s.Position; t:SetAttribute("StartTime", s.StartTime) end end,
+				undo = function() for t, s in pairs(originalStates) do t.Position = s.Position; t:SetAttribute("StartTime", s.StartTime) end end
+			}
+			self.historyManager:registerAction(action)
+		end
+		dragMode = nil
+	end)
+
+	local function createHandle(side)
+		local handle = Instance.new("Frame"); handle.Size = UDim2.new(0, 8, 1, 0); handle.Position = (side == "Left") and UDim2.new(0, -4, 0, 0) or UDim2.new(1, -4, 0, 0); handle.BackgroundColor3 = Color3.fromRGB(255, 255, 0); handle.Parent = track; handle.Active = true
+		local resizing, resizeStart, originalSize, originalPos = false, 0, 0, 0
+
+		handle.InputBegan:Connect(function(input)
+			if track:GetAttribute("IsLocked") then return end
+			if input.UserInputType == Enum.UserInputType.MouseButton1 and input.Position then
+				resizing = true; resizeStart = input.Position.X; originalSize = track.Size.X.Offset; originalPos = track.Position.X.Offset
+			end
+		end)
+
+		handle.InputChanged:Connect(function(input)
+			if resizing and input.UserInputType == Enum.UserInputType.MouseMovement and input.Position then
+				local delta = input.Position.X - resizeStart
+				local edgePos
+				if side == "Left" then
+					edgePos = originalPos + delta
+					track.Position = UDim2.new(0, edgePos, 0, track.Position.Y.Offset)
+					track.Size = UDim2.new(0, originalSize - delta, 0, track.Size.Y.Offset)
+				else
+					edgePos = originalPos + originalSize + delta
+					track.Size = UDim2.new(0, originalSize + delta, 0, track.Size.Y.Offset)
+				end
+				if math.abs(edgePos - self.playhead.Position.X.Offset) < self.PLAYHEAD_SNAP_DISTANCE then self.playhead.BackgroundColor3 = Color3.fromRGB(255, 255, 0) else self.playhead.BackgroundColor3 = Color3.fromRGB(255, 50, 50) end
+			end
+		end)
+
+		handle.InputEnded:Connect(function(input)
+			if resizing and input.UserInputType == Enum.UserInputType.MouseButton1 then
+				resizing = false
+				self.playhead.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+
+				local originalState = {Position = UDim2.new(0, originalPos, 0, track.Position.Y.Offset), Size = UDim2.new(0, originalSize, 0, track.Size.Y.Offset), StartTime = track:GetAttribute("StartTime"), Duration = track:GetAttribute("Duration")}
+				local zoomedPixelsPerSecond = self.PIXELS_PER_SECOND * tm.zoom
+				local finalPos, finalSize = track.Position.X.Offset, track.Size.X.Offset
+
+				if side == "Left" and math.abs(finalPos - self.playhead.Position.X.Offset) < self.PLAYHEAD_SNAP_DISTANCE then
+					local oldEndTime = (originalPos + originalSize) / zoomedPixelsPerSecond
+					finalPos = self.playhead.Position.X.Offset
+					track:SetAttribute("Duration", oldEndTime - (finalPos / zoomedPixelsPerSecond))
+				elseif side == "Right" and math.abs(finalPos + finalSize - self.playhead.Position.X.Offset) < self.PLAYHEAD_SNAP_DISTANCE then
+					finalSize = self.playhead.Position.X.Offset - finalPos
+					track:SetAttribute("Duration", finalSize / zoomedPixelsPerSecond)
+				else
+					local snappedStart = math.floor((finalPos / zoomedPixelsPerSecond) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
+					local snappedEnd = math.floor(((finalPos + finalSize) / zoomedPixelsPerSecond) / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
+					track:SetAttribute("StartTime", snappedStart)
+					track:SetAttribute("Duration", snappedEnd - snappedStart)
+				end
+
+				tm:redrawTimeline()
+
+				local finalState = {Position = track.Position, Size = track.Size, StartTime = track:GetAttribute("StartTime"), Duration = track:GetAttribute("Duration")}
+				local action = {
+					execute = function() track.Position = finalState.Position; track.Size = finalState.Size; track:SetAttribute("StartTime", finalState.StartTime); track:SetAttribute("Duration", finalState.Duration) end,
+					undo = function() track.Position = originalState.Position; track.Size = originalState.Size; track:SetAttribute("StartTime", originalState.StartTime); track:SetAttribute("Duration", originalState.Duration) end
+				}
+				self.historyManager:registerAction(action)
+			end
 		end)
 	end
+	createHandle("Left"); createHandle("Right")
+end
 
-	local function showSubMenu(subMenu)
-		cancelHide()
-		if activeSubMenu and activeSubMenu ~= subMenu then
-			activeSubMenu.Visible = false
+function TrackInteractor:makeKeyframeInteractive(kfMarker)
+	local tm = self.timelineManager
+	local isDragging = false
+	local dragStartPos
+	local originalTimes = {} -- Store original times for all selected keyframes
+
+	kfMarker.MouseButton1Down:Connect(function(x, y)
+		local isCtrlDown = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+
+		-- If the clicked keyframe is not already selected (and ctrl is not held), deselect everything first
+		if not tm.selectedKeyframes[kfMarker] and not isCtrlDown then
+			tm:deselectAllKeyframes()
 		end
-		activeSubMenu = subMenu
-		activeSubMenu.Visible = true
-	end
+		tm:addKeyframeToSelection(kfMarker)
 
-	ui.SetGroupColorButton.MouseEnter:Connect(function() showSubMenu(ui.GroupColorSubMenu) end)
-	ui.GroupColorSubMenu.MouseEnter:Connect(cancelHide)
+		isDragging = true
+		dragStartPos = Vector2.new(x, y)
 
-	ui.ContextMenu.MouseLeave:Connect(scheduleHide)
-
-	ui.CopyButton.MouseEnter:Connect(function() if activeSubMenu then activeSubMenu.Visible = false; activeSubMenu=nil end end)
-	ui.PasteButton.MouseEnter:Connect(function() if activeSubMenu then activeSubMenu.Visible = false; activeSubMenu=nil end end)
-
-	return ui
-end
-
-function UIManager.showConfirmationDialog(ui, title, message, onConfirm)
-	ui.DialogTitle.Text = title
-	ui.DialogMessage.Text = message
-	ui.ConfirmationDialog.Visible = true
-
-	-- This is tricky because we can't easily store the connections.
-	-- For this specific case, we can connect/disconnect inside the handlers.
-	-- A more robust system would use a dedicated signal library.
-	local confirmConn, cancelConn
-
-	local function cleanup()
-		confirmConn:Disconnect()
-		cancelConn:Disconnect()
-		ui.ConfirmationDialog.Visible = false
-	end
-
-	confirmConn = ui.ConfirmButton.MouseButton1Click:Connect(function()
-		cleanup()
-		if onConfirm then onConfirm() end
+		-- Store original times for all selected keyframes
+		originalTimes = {}
+		for selectedKf in pairs(tm.selectedKeyframes) do
+			originalTimes[selectedKf] = selectedKf:GetAttribute("Time")
+		end
 	end)
 
-	cancelConn = ui.CancelButton.MouseButton1Click:Connect(function()
-		cleanup()
+	kfMarker.InputChanged:Connect(function(input)
+		if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement and input.Position then
+			local deltaX = input.Position.X - dragStartPos.X
+
+			for selectedKf, originalTime in pairs(originalTimes) do
+				local track = selectedKf:GetAttribute("Track")
+				local duration = track:GetAttribute("Duration")
+				if duration > 0 then
+					local pixelsPerSecond = (track.AbsoluteSize.X / duration)
+
+					local newTime = originalTime + (deltaX / pixelsPerSecond)
+					newTime = math.clamp(newTime, 0, duration)
+
+					-- Snap to interval
+					newTime = math.floor(newTime / self.SNAP_INTERVAL + 0.5) * self.SNAP_INTERVAL
+
+					selectedKf.Position = UDim2.new(newTime / duration, 0, 0.5, 0)
+				end
+			end
+		end
+	end)
+
+	kfMarker.InputEnded:Connect(function(input)
+		if isDragging and input.UserInputType == Enum.UserInputType.MouseButton1 then
+			isDragging = false
+
+			-- Group updates by track and property name for the history action
+			local updates = {}
+
+			for selectedKf, originalTime in pairs(originalTimes) do
+				local track = selectedKf:GetAttribute("Track")
+				local propName = selectedKf:GetAttribute("PropName")
+				local duration = track:GetAttribute("Duration")
+				local newTime = selectedKf.Position.X.Scale * duration
+
+				if newTime ~= originalTime then
+					if not updates[track] then updates[track] = {} end
+					if not updates[track][propName] then updates[track][propName] = {} end
+					table.insert(updates[track][propName], { oldTime = originalTime, newTime = newTime })
+				end
+			end
+
+			if next(updates) == nil then return end -- No changes were made
+
+			local originalKeyframeData = {}
+			local newKeyframeData = {}
+
+			local action = {
+				execute = function()
+					for track, props in pairs(updates) do
+						newKeyframeData[track] = {}
+						for propName, timeChanges in pairs(props) do
+							local keyframes = track:GetAttribute(propName)
+							originalKeyframeData[track] = originalKeyframeData[track] or {}
+							originalKeyframeData[track][propName] = keyframes -- Save original state for undo
+
+							local tempKeyframes = {}
+							local kfsToUpdate = {}
+
+							for _, kf in ipairs(keyframes) do
+								local foundChange = false
+								for _, change in ipairs(timeChanges) do
+									if kf.time == change.oldTime then
+										kfsToUpdate[change.newTime] = kf
+										foundChange = true
+										break
+									end
+								end
+								if not foundChange then
+									table.insert(tempKeyframes, kf)
+								end
+							end
+
+							for newTime, kf in pairs(kfsToUpdate) do
+								kf.time = newTime
+								table.insert(tempKeyframes, kf)
+							end
+
+							table.sort(tempKeyframes, function(a, b) return a.time < b.time end)
+							newKeyframeData[track][propName] = tempKeyframes
+							track:SetAttribute(propName, tempKeyframes)
+							tm.PropertiesManager.KeyframeChanged:Fire(track)
+						end
+					end
+				end,
+				undo = function()
+					for track, props in pairs(originalKeyframeData) do
+						for propName, keyframes in pairs(props) do
+							track:SetAttribute(propName, keyframes)
+							tm.PropertiesManager.KeyframeChanged:Fire(track)
+						end
+					end
+				end
+			}
+			self.historyManager:registerAction(action)
+		end
 	end)
 end
 
-return UIManager
+
+return TrackInteractor
